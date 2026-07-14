@@ -5,11 +5,12 @@ local GHub = {
     Nome = "GHub",
     Versao = "v1.0",
     AutoFarm = false,
-    TempoInicio = os.time(),
+    TempoCriacaoServidor = nil, -- Será definido ao iniciar
     BausColetados = 0,
     Baus = {},
     BausProibidos = {},
     DistanciaMinima = 10,
+    VelocidadeTween = 25,
     Player = game.Players.LocalPlayer,
     Personagem = nil,
     Raiz = nil,
@@ -67,10 +68,11 @@ function GHub:MoverParaBau(bau)
     local distancia = (posicaoAlvo - self.Raiz.Position).Magnitude
 
     if distancia > self.DistanciaMinima then
+        local tempoViagem = math.clamp(distancia / self.VelocidadeTween, 1.5, 4)
         local tweenInfo = TweenInfo.new(
-            math.clamp(distancia / 50, 0.5, 2),
+            tempoViagem,
             Enum.EasingStyle.Sine,
-            Enum.EasingDirection.Out
+            Enum.EasingDirection.InOut
         )
         local tween = self.TweenService:Create(self.Raiz, tweenInfo, {CFrame = CFrame.new(posicaoAlvo)})
         tween:Play()
@@ -85,11 +87,13 @@ function GHub:ColetarBau(bau)
 
     local distancia = (bau.Position - self.Raiz.Position).Magnitude
     if distancia < 8 then
+        task.wait(0.2)
         self.VirtualInput:SendKeyEvent(true, "E", false, game)
-        task.wait(0.1)
+        task.wait(0.15)
         self.VirtualInput:SendKeyEvent(false, "E", false, game)
         self.BausColetados = self.BausColetados + 1
         table.insert(self.BausProibidos, bau)
+        task.wait(0.3)
         return true
     end
     return false
@@ -109,9 +113,9 @@ function GHub:ExecutarAutoFarm()
             self:MoverParaBau(bau)
             self:ColetarBau(bau)
         else
-            task.wait(0.5)
+            task.wait(1)
         end
-        task.wait(0.1)
+        task.wait(0.2)
     end
 end
 
@@ -241,12 +245,12 @@ function Interface:CriarUI()
     self.StatusAutoFarm.Font = Enum.Font.GothamMedium
     self.StatusAutoFarm.Parent = self.FrameConteudo
 
-    -- Contador de Tempo
+    -- Contador de Tempo do Servidor
     self.ContadorTempo = Instance.new("TextLabel")
     self.ContadorTempo.Size = UDim2.new(0, 200, 0, 30)
     self.ContadorTempo.Position = UDim2.new(0.5, -100, 0, 140)
     self.ContadorTempo.BackgroundTransparency = 1
-    self.ContadorTempo.Text = "TEMPO: 00:00:00"
+    self.ContadorTempo.Text = "TEMPO SERVIDOR: 00:00:00"
     self.ContadorTempo.TextColor3 = Color3.fromRGB(200, 200, 230)
     self.ContadorTempo.TextSize = 14
     self.ContadorTempo.Font = Enum.Font.GothamMedium
@@ -312,13 +316,13 @@ function Interface:TornarArrastavel()
     end)
 end
 
-function Interface:AtualizarTempo()
-    local tempoAtual = os.time()
-    local tempoDecorrido = tempoAtual - GHub.TempoInicio
+function Interface:AtualizarTempoServidor()
+    -- Calcula o tempo desde a criação do servidor
+    local tempoDecorrido = os.time() - GHub.TempoCriacaoServidor
     local horas = string.format("%02d", math.floor(tempoDecorrido / 3600))
     local minutos = string.format("%02d", math.floor((tempoDecorrido % 3600) / 60))
     local segundos = string.format("%02d", tempoDecorrido % 60)
-    self.ContadorTempo.Text = "TEMPO: " .. horas .. ":" .. minutos .. ":" .. segundos
+    self.ContadorTempo.Text = "TEMPO SERVIDOR: " .. horas .. ":" .. minutos .. ":" .. segundos
 end
 
 function Interface:AtualizarStatus(ativo)
@@ -350,14 +354,29 @@ end
 
 -- INICIALIZAÇÃO
 function GHub:Iniciar()
+    -- Obtém o tempo de criação do servidor
+    -- O servidor inicia quando o jogo é carregado, usamos o tempo atual como referência
+    -- pois não temos acesso direto ao tempo de criação do servidor
+    self.TempoCriacaoServidor = os.time()
+    
+    -- Tenta obter o tempo real de criação do servidor através do Datastore ou serviço
+    -- Caso não seja possível, usa o tempo atual como referência
+    pcall(function()
+        -- Alguns jogos tem o tempo de criação do servidor armazenado
+        local serverTime = game:GetService("ReplicatedStorage"):FindFirstChild("ServerStartTime")
+        if serverTime and type(serverTime.Value) == "number" then
+            self.TempoCriacaoServidor = serverTime.Value
+        end
+    end)
+
     -- Cria interface
     Interface:CriarUI()
     Interface:ConfigurarBotoes()
 
-    -- Inicia contador de tempo
+    -- Inicia contador de tempo do servidor
     task.spawn(function()
         while true do
-            Interface:AtualizarTempo()
+            Interface:AtualizarTempoServidor()
             task.wait(1)
         end
     end)
@@ -373,12 +392,13 @@ function GHub:Iniciar()
     -- Limpa lista de baús proibidos periodicamente
     task.spawn(function()
         while true do
-            task.wait(300) -- A cada 5 minutos
+            task.wait(300)
             self.BausProibidos = {}
         end
     end)
 
     print("GHub v1.0 - Auto Farm Chest carregado com sucesso!")
+    print("Tempo de criação do servidor: " .. os.date("%d/%m/%Y %H:%M:%S", self.TempoCriacaoServidor))
 end
 
 -- Executa o script
