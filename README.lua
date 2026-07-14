@@ -1,405 +1,616 @@
--- GHub - Auto Farm Chest
--- Versão: v1.0
+--[[
+    GHub - Auto Farm Chest
+    Versão: 1.0
+    Plataforma: Roblox - Blox Fruits
+    
+    Script desenvolvido exclusivamente para sistema de Auto Farm Chest
+    Interface premium com design Glassmorphism e Dark Mode
+--]]
 
+-- Services
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local CoreGui = game:GetService("CoreGui")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+-- Configurações
 local GHub = {
-    Nome = "GHub",
-    Versao = "v1.0",
-    AutoFarm = false,
-    TempoCriacaoServidor = nil, -- Será definido ao iniciar
-    BausColetados = 0,
-    Baus = {},
-    BausProibidos = {},
-    DistanciaMinima = 10,
-    VelocidadeTween = 25,
-    Player = game.Players.LocalPlayer,
-    Personagem = nil,
-    Raiz = nil,
-    TweenService = game:GetService("TweenService"),
-    RunService = game:GetService("RunService"),
-    UserInputService = game:GetService("UserInputService"),
-    VirtualInput = game:GetService("VirtualInputManager"),
+    Player = Players.LocalPlayer,
+    Character = nil,
+    Humanoid = nil,
+    HumanoidRootPart = nil,
+    
+    -- Estado do Auto Farm
+    AutoFarmActive = false,
+    StopOnItem = false,
+    Speed = 25,
+    ChestsCollected = 0,
+    BlacklistedChests = {},
+    TargetChest = nil,
+    IsMoving = false,
+    
+    -- Tempo do servidor
+    ServerStartTime = tick(),
+    
+    -- Interface
+    UI = {
+        MainFrame = nil,
+        Minimized = false,
+        Dragging = false,
+        DragStart = nil,
+        StartPosition = nil
+    },
+    
+    -- Configurações do Tween
+    TweenConfig = {
+        MinTime = 1.5,
+        MaxTime = 4,
+        MinDistance = 10,
+        CollectDistance = 8,
+        EasingStyle = Enum.EasingStyle.Sine,
+        EasingDirection = Enum.EasingDirection.InOut
+    }
 }
 
+-- ============================================
 -- FUNÇÕES AUXILIARES
-function GHub:AtualizarPersonagem()
-    self.Personagem = self.Player.Character
-    if self.Personagem then
-        self.Raiz = self.Personagem:FindFirstChild("HumanoidRootPart")
+-- ============================================
+
+function GHub:GetCharacter()
+    self.Character = self.Player.Character
+    if self.Character then
+        self.Humanoid = self.Character:FindFirstChild("Humanoid")
+        self.HumanoidRootPart = self.Character:FindFirstChild("HumanoidRootPart")
     end
+    return self.Character ~= nil
 end
 
-function GHub:EncontrarBaus()
-    local bausEncontrados = {}
-    for _, objeto in ipairs(workspace:GetDescendants()) do
-        if objeto:IsA("BasePart") and objeto.Name:lower():find("chest") and objeto:IsDescendantOf(workspace) then
-            if objeto.Parent and objeto.Parent:FindFirstChild("Humanoid") == nil then
-                local raiz = objeto:FindFirstChild("RootPart") or objeto
-                if raiz and raiz.Position and not table.find(self.BausProibidos, raiz) then
-                    table.insert(bausEncontrados, raiz)
-                end
+function GHub:GetAllChests()
+    local chests = {}
+    -- Busca por baús no workspace
+    -- Adaptar conforme a nomenclatura dos baús no Blox Fruits
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and obj.Name:lower():find("chest") or obj.Name:lower():find("baú") then
+            -- Verificar se não está na lista de proibidos
+            if not table.find(self.BlacklistedChests, obj) then
+                table.insert(chests, obj)
             end
         end
     end
-    return bausEncontrados
+    return chests
 end
 
-function GHub:ObterBauMaisProximo()
-    if not self.Raiz then return nil end
-    local baus = self:EncontrarBaus()
-    local melhorBau = nil
-    local menorDistancia = math.huge
-    local posicaoJogador = self.Raiz.Position
-
-    for _, bau in ipairs(baus) do
-        local distancia = (bau.Position - posicaoJogador).Magnitude
-        if distancia < menorDistancia then
-            menorDistancia = distancia
-            melhorBau = bau
+function GHub:FindNearestChest(chests)
+    if not self.HumanoidRootPart then return nil end
+    
+    local nearest = nil
+    local nearestDist = math.huge
+    local currentPos = self.HumanoidRootPart.Position
+    
+    for _, chest in pairs(chests) do
+        if chest and chest:IsA("BasePart") and chest.Parent then
+            local dist = (chest.Position - currentPos).Magnitude
+            if dist < nearestDist then
+                nearestDist = dist
+                nearest = chest
+            end
         end
     end
-
-    return melhorBau
+    
+    return nearest, nearestDist
 end
 
-function GHub:MoverParaBau(bau)
-    if not bau or not self.Raiz then return end
+function GHub:CalculateTweenTime(distance)
+    local time = distance / self.Speed
+    return math.clamp(time, self.TweenConfig.MinTime, self.TweenConfig.MaxTime)
+end
 
-    local posicaoAlvo = bau.Position + Vector3.new(0, 2, 0)
-    local distancia = (posicaoAlvo - self.Raiz.Position).Magnitude
+function GHub:SimulateKeyPress(key)
+    VirtualInputManager:SendKeyEvent(true, key, false, nil)
+    task.wait(0.15)
+    VirtualInputManager:SendKeyEvent(false, key, false, nil)
+end
 
-    if distancia > self.DistanciaMinima then
-        local tempoViagem = math.clamp(distancia / self.VelocidadeTween, 1.5, 4)
-        local tweenInfo = TweenInfo.new(
-            tempoViagem,
-            Enum.EasingStyle.Sine,
-            Enum.EasingDirection.InOut
-        )
-        local tween = self.TweenService:Create(self.Raiz, tweenInfo, {CFrame = CFrame.new(posicaoAlvo)})
-        tween:Play()
-        tween.Completed:Wait()
-        return true
+function GHub:GetServerTime()
+    return tick() - self.ServerStartTime
+end
+
+function GHub:FormatTime(seconds)
+    local hours = math.floor(seconds / 3600)
+    local minutes = math.floor((seconds % 3600) / 60)
+    local secs = math.floor(seconds % 60)
+    return string.format("%02d:%02d:%02d", hours, minutes, secs)
+end
+
+-- ============================================
+-- LÓGICA DO AUTO FARM
+-- ============================================
+
+function GHub:ClearBlacklist()
+    self.BlacklistedChests = {}
+end
+
+function GHub:CheckForItems(chest)
+    -- Verifica se há itens próximos ao baú
+    if not self.StopOnItem then return false end
+    
+    local items = {}
+    -- Adaptar para procurar itens dropados no Blox Fruits
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and obj.Name:lower():find("item") then
+            if (obj.Position - chest.Position).Magnitude < 15 then
+                table.insert(items, obj)
+            end
+        end
     end
-    return false
+    
+    return #items > 0
 end
 
-function GHub:ColetarBau(bau)
-    if not bau or not self.Raiz then return end
-
-    local distancia = (bau.Position - self.Raiz.Position).Magnitude
-    if distancia < 8 then
-        task.wait(0.2)
-        self.VirtualInput:SendKeyEvent(true, "E", false, game)
-        task.wait(0.15)
-        self.VirtualInput:SendKeyEvent(false, "E", false, game)
-        self.BausColetados = self.BausColetados + 1
-        table.insert(self.BausProibidos, bau)
-        task.wait(0.3)
-        return true
+function GHub:CollectChest(chest)
+    if not chest or not chest.Parent then return false end
+    
+    -- Verificar distância
+    if not self.HumanoidRootPart then return false end
+    local dist = (chest.Position - self.HumanoidRootPart.Position).Magnitude
+    
+    if dist > self.TweenConfig.CollectDistance then
+        return false
     end
-    return false
+    
+    -- Delay humano
+    task.wait(0.2)
+    
+    -- Coletar
+    self:SimulateKeyPress(Enum.KeyCode.E)
+    
+    -- Delay após coleta
+    task.wait(0.3)
+    
+    -- Adicionar à lista de proibidos
+    table.insert(self.BlacklistedChests, chest)
+    self.ChestsCollected = self.ChestsCollected + 1
+    
+    return true
 end
 
--- LOOP PRINCIPAL DO AUTO FARM
-function GHub:ExecutarAutoFarm()
-    while self.AutoFarm do
-        self:AtualizarPersonagem()
-        if not self.Personagem or not self.Raiz then
+function GHub:MoveToChest(chest)
+    if not chest or not chest.Parent then return false end
+    if not self.HumanoidRootPart then return false end
+    
+    local dist = (chest.Position - self.HumanoidRootPart.Position).Magnitude
+    
+    -- Verificar distância mínima
+    if dist < self.TweenConfig.MinDistance then
+        return true -- Já está perto
+    end
+    
+    -- Calcular tempo de viagem
+    local tweenTime = self:CalculateTweenTime(dist)
+    
+    -- Configurar Tween
+    local tweenInfo = TweenInfo.new(
+        tweenTime,
+        self.TweenConfig.EasingStyle,
+        self.TweenConfig.EasingDirection
+    )
+    
+    local targetPosition = chest.Position + Vector3.new(0, 2, 0) -- Ajuste de altura
+    local tween = TweenService:Create(
+        self.HumanoidRootPart,
+        tweenInfo,
+        {CFrame = CFrame.new(targetPosition)}
+    )
+    
+    self.IsMoving = true
+    
+    -- Executar Tween
+    tween:Play()
+    tween.Completed:Wait()
+    
+    self.IsMoving = false
+    return true
+end
+
+function GHub:AutoFarmLoop()
+    while self.AutoFarmActive do
+        -- Verificar personagem
+        if not self:GetCharacter() then
             task.wait(1)
             continue
         end
-
-        local bau = self:ObterBauMaisProximo()
-        if bau then
-            self:MoverParaBau(bau)
-            self:ColetarBau(bau)
-        else
+        
+        -- Encontrar baús
+        local chests = self:GetAllChests()
+        
+        if #chests == 0 then
             task.wait(1)
+            continue
         end
+        
+        -- Selecionar baú mais próximo
+        local target, distance = self:FindNearestChest(chests)
+        
+        if not target then
+            task.wait(0.5)
+            continue
+        end
+        
+        self.TargetChest = target
+        
+        -- Mover para o baú
+        local moved = self:MoveToChest(target)
+        
+        if not moved then
+            task.wait(0.5)
+            continue
+        end
+        
+        -- Verificar itens (se ativado)
+        if self:CheckForItems(target) then
+            self.AutoFarmActive = false
+            self:UpdateUIStatus()
+            break
+        end
+        
+        -- Coletar
+        local collected = self:CollectChest(target)
+        
+        if not collected then
+            -- Se não coletou, adicionar à lista de proibidos
+            table.insert(self.BlacklistedChests, target)
+        end
+        
+        -- Pequena pausa entre ações
         task.wait(0.2)
+        
+        -- Limpar lista de proibidos a cada 5 minutos
+        if self.ChestsCollected % 20 == 0 then
+            self:ClearBlacklist()
+        end
     end
+    
+    self:UpdateUIStatus()
 end
 
--- INTERFACE GRÁFICA (UI)
-local Interface = {
-    ScreenGui = nil,
-    FramePrincipal = nil,
-    FrameTopo = nil,
-    Titulo = nil,
-    Subtitulo = nil,
-    FrameConteudo = nil,
-    BotaoToggle = nil,
-    StatusAutoFarm = nil,
-    ContadorTempo = nil,
-    FrameRodape = nil,
-    Versao = nil,
-    EstadoMinimizado = false,
-}
+-- ============================================
+-- INTERFACE GRÁFICA
+-- ============================================
 
-function Interface:CriarUI()
-    -- Criação da ScreenGui
-    self.ScreenGui = Instance.new("ScreenGui")
-    self.ScreenGui.Name = "GHubInterface"
-    self.ScreenGui.ResetOnSpawn = false
-    self.ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    self.ScreenGui.Parent = game.CoreGui
-
-    -- Frame Principal (Glassmorphism)
-    self.FramePrincipal = Instance.new("Frame")
-    self.FramePrincipal.Size = UDim2.new(0, 380, 0, 480)
-    self.FramePrincipal.Position = UDim2.new(0.5, -190, 0.5, -240)
-    self.FramePrincipal.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-    self.FramePrincipal.BackgroundTransparency = 0.15
-    self.FramePrincipal.BorderSizePixel = 0
-    self.FramePrincipal.ClipsDescendants = true
-    self.FramePrincipal.Parent = self.ScreenGui
-
-    -- Efeito Glassmorphism
-    local glassEffect = Instance.new("Frame")
-    glassEffect.Size = UDim2.new(1, 0, 1, 0)
-    glassEffect.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
-    glassEffect.BackgroundTransparency = 0.7
-    glassEffect.BorderSizePixel = 0
-    glassEffect.Parent = self.FramePrincipal
-
+function GHub:CreateUI()
+    -- Frame principal com Glassmorphism
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Size = UDim2.new(0, 380, 0, 520)
+    mainFrame.Position = UDim2.new(0.5, -190, 0.5, -260)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+    mainFrame.BackgroundTransparency = 0.85
+    mainFrame.BorderSizePixel = 0
+    mainFrame.ClipsDescendants = true
+    mainFrame.Parent = CoreGui
+    
     -- Cantos arredondados e sombra
-    local corners = Instance.new("UICorner")
-    corners.CornerRadius = UDim.new(0, 16)
-    corners.Parent = self.FramePrincipal
-
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 16)
+    corner.Parent = mainFrame
+    
     local shadow = Instance.new("Frame")
-    shadow.Size = UDim2.new(1, 10, 1, 10)
-    shadow.Position = UDim2.new(0, -5, 0, -5)
+    shadow.Size = UDim2.new(1, 0, 1, 0)
+    shadow.Position = UDim2.new(0, 0, 0, 5)
     shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
     shadow.BackgroundTransparency = 0.5
     shadow.BorderSizePixel = 0
-    shadow.Parent = self.FramePrincipal
-
-    -- Frame Topo
-    self.FrameTopo = Instance.new("Frame")
-    self.FrameTopo.Size = UDim2.new(1, 0, 0, 80)
-    self.FrameTopo.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
-    self.FrameTopo.BackgroundTransparency = 0.3
-    self.FrameTopo.BorderSizePixel = 0
-    self.FrameTopo.Parent = self.FramePrincipal
-
-    local topoCorners = Instance.new("UICorner")
-    topoCorners.CornerRadius = UDim.new(0, 16)
-    topoCorners.Parent = self.FrameTopo
-
-    -- Título GHub
-    self.Titulo = Instance.new("TextLabel")
-    self.Titulo.Size = UDim2.new(1, 0, 0, 40)
-    self.Titulo.Position = UDim2.new(0, 0, 0, 10)
-    self.Titulo.BackgroundTransparency = 1
-    self.Titulo.Text = "GHub"
-    self.Titulo.TextColor3 = Color3.fromRGB(150, 180, 255)
-    self.Titulo.TextSize = 32
-    self.Titulo.Font = Enum.Font.GothamBold
-    self.Titulo.TextScaled = false
-    self.Titulo.Parent = self.FrameTopo
-
-    -- Subtítulo
-    self.Subtitulo = Instance.new("TextLabel")
-    self.Subtitulo.Size = UDim2.new(1, 0, 0, 25)
-    self.Subtitulo.Position = UDim2.new(0, 0, 0, 48)
-    self.Subtitulo.BackgroundTransparency = 1
-    self.Subtitulo.Text = "Auto Farm Chest"
-    self.Subtitulo.TextColor3 = Color3.fromRGB(200, 200, 230)
-    self.Subtitulo.TextSize = 16
-    self.Subtitulo.Font = Enum.Font.GothamMedium
-    self.Subtitulo.TextScaled = false
-    self.Subtitulo.Parent = self.FrameTopo
-
-    -- Frame Conteúdo
-    self.FrameConteudo = Instance.new("Frame")
-    self.FrameConteudo.Size = UDim2.new(1, -40, 1, -140)
-    self.FrameConteudo.Position = UDim2.new(0, 20, 0, 100)
-    self.FrameConteudo.BackgroundTransparency = 1
-    self.FrameConteudo.Parent = self.FramePrincipal
-
-    -- Botão Toggle (Ativar/Desativar)
-    self.BotaoToggle = Instance.new("TextButton")
-    self.BotaoToggle.Size = UDim2.new(0, 200, 0, 50)
-    self.BotaoToggle.Position = UDim2.new(0.5, -100, 0, 20)
-    self.BotaoToggle.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
-    self.BotaoToggle.BackgroundTransparency = 0.3
-    self.BotaoToggle.Text = "ATIVAR AUTO FARM"
-    self.BotaoToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-    self.BotaoToggle.TextSize = 16
-    self.BotaoToggle.Font = Enum.Font.GothamBold
-    self.BotaoToggle.BorderSizePixel = 0
-    self.BotaoToggle.Parent = self.FrameConteudo
-
-    local btnCorners = Instance.new("UICorner")
-    btnCorners.CornerRadius = UDim.new(0, 8)
-    btnCorners.Parent = self.BotaoToggle
-
-    -- Status Auto Farm
-    self.StatusAutoFarm = Instance.new("TextLabel")
-    self.StatusAutoFarm.Size = UDim2.new(0, 150, 0, 30)
-    self.StatusAutoFarm.Position = UDim2.new(0.5, -75, 0, 90)
-    self.StatusAutoFarm.BackgroundTransparency = 1
-    self.StatusAutoFarm.Text = "STATUS: OFF"
-    self.StatusAutoFarm.TextColor3 = Color3.fromRGB(255, 80, 80)
-    self.StatusAutoFarm.TextSize = 14
-    self.StatusAutoFarm.Font = Enum.Font.GothamMedium
-    self.StatusAutoFarm.Parent = self.FrameConteudo
-
-    -- Contador de Tempo do Servidor
-    self.ContadorTempo = Instance.new("TextLabel")
-    self.ContadorTempo.Size = UDim2.new(0, 200, 0, 30)
-    self.ContadorTempo.Position = UDim2.new(0.5, -100, 0, 140)
-    self.ContadorTempo.BackgroundTransparency = 1
-    self.ContadorTempo.Text = "TEMPO SERVIDOR: 00:00:00"
-    self.ContadorTempo.TextColor3 = Color3.fromRGB(200, 200, 230)
-    self.ContadorTempo.TextSize = 14
-    self.ContadorTempo.Font = Enum.Font.GothamMedium
-    self.ContadorTempo.Parent = self.FrameConteudo
-
-    -- Frame Rodapé
-    self.FrameRodape = Instance.new("Frame")
-    self.FrameRodape.Size = UDim2.new(1, 0, 0, 40)
-    self.FrameRodape.Position = UDim2.new(0, 0, 1, -40)
-    self.FrameRodape.BackgroundColor3 = Color3.fromRGB(10, 10, 20)
-    self.FrameRodape.BackgroundTransparency = 0.5
-    self.FrameRodape.BorderSizePixel = 0
-    self.FrameRodape.Parent = self.FramePrincipal
-
-    -- Versão
-    self.Versao = Instance.new("TextLabel")
-    self.Versao.Size = UDim2.new(1, 0, 1, 0)
-    self.Versao.BackgroundTransparency = 1
-    self.Versao.Text = "GHub v1.0"
-    self.Versao.TextColor3 = Color3.fromRGB(150, 150, 180)
-    self.Versao.TextSize = 12
-    self.Versao.Font = Enum.Font.GothamMedium
-    self.Versao.Parent = self.FrameRodape
-
-    -- Tornar arrastável
-    self:TornarArrastavel()
-end
-
-function Interface:TornarArrastavel()
-    local dragging = false
-    local dragInput, dragStart, startPos
-
-    self.FrameTopo.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            dragStart = input.Position
-            startPos = self.FramePrincipal.Position
-        end
-    end)
-
-    self.FrameTopo.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement then
-            dragInput = input
-        end
-    end)
-
-    self.FrameTopo.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
-    end)
-
-    GHub.UserInputService.InputChanged:Connect(function(input)
-        if dragging and input == dragInput then
-            local delta = input.Position - dragStart
-            self.FramePrincipal.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
-        end
-    end)
-end
-
-function Interface:AtualizarTempoServidor()
-    -- Calcula o tempo desde a criação do servidor
-    local tempoDecorrido = os.time() - GHub.TempoCriacaoServidor
-    local horas = string.format("%02d", math.floor(tempoDecorrido / 3600))
-    local minutos = string.format("%02d", math.floor((tempoDecorrido % 3600) / 60))
-    local segundos = string.format("%02d", tempoDecorrido % 60)
-    self.ContadorTempo.Text = "TEMPO SERVIDOR: " .. horas .. ":" .. minutos .. ":" .. segundos
-end
-
-function Interface:AtualizarStatus(ativo)
-    if ativo then
-        self.StatusAutoFarm.Text = "STATUS: ON"
-        self.StatusAutoFarm.TextColor3 = Color3.fromRGB(80, 255, 80)
-        self.BotaoToggle.Text = "DESATIVAR AUTO FARM"
-        self.BotaoToggle.BackgroundColor3 = Color3.fromRGB(60, 40, 40)
-    else
-        self.StatusAutoFarm.Text = "STATUS: OFF"
-        self.StatusAutoFarm.TextColor3 = Color3.fromRGB(255, 80, 80)
-        self.BotaoToggle.Text = "ATIVAR AUTO FARM"
-        self.BotaoToggle.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
-    end
-end
-
-function Interface:ConfigurarBotoes()
-    self.BotaoToggle.MouseButton1Click:Connect(function()
-        GHub.AutoFarm = not GHub.AutoFarm
-        self:AtualizarStatus(GHub.AutoFarm)
-
-        if GHub.AutoFarm then
-            task.spawn(function()
-                GHub:ExecutarAutoFarm()
-            end)
-        end
-    end)
-end
-
--- INICIALIZAÇÃO
-function GHub:Iniciar()
-    -- Obtém o tempo de criação do servidor
-    -- O servidor inicia quando o jogo é carregado, usamos o tempo atual como referência
-    -- pois não temos acesso direto ao tempo de criação do servidor
-    self.TempoCriacaoServidor = os.time()
+    shadow.ZIndex = -1
+    shadow.Parent = mainFrame
     
-    -- Tenta obter o tempo real de criação do servidor através do Datastore ou serviço
-    -- Caso não seja possível, usa o tempo atual como referência
-    pcall(function()
-        -- Alguns jogos tem o tempo de criação do servidor armazenado
-        local serverTime = game:GetService("ReplicatedStorage"):FindFirstChild("ServerStartTime")
-        if serverTime and type(serverTime.Value) == "number" then
-            self.TempoCriacaoServidor = serverTime.Value
-        end
-    end)
-
-    -- Cria interface
-    Interface:CriarUI()
-    Interface:ConfigurarBotoes()
-
-    -- Inicia contador de tempo do servidor
-    task.spawn(function()
-        while true do
-            Interface:AtualizarTempoServidor()
-            task.wait(1)
-        end
-    end)
-
-    -- Atualiza personagem periodicamente
-    task.spawn(function()
-        while true do
-            self:AtualizarPersonagem()
-            task.wait(0.5)
-        end
-    end)
-
-    -- Limpa lista de baús proibidos periodicamente
-    task.spawn(function()
-        while true do
-            task.wait(300)
-            self.BausProibidos = {}
-        end
-    end)
-
-    print("GHub v1.0 - Auto Farm Chest carregado com sucesso!")
-    print("Tempo de criação do servidor: " .. os.date("%d/%m/%Y %H:%M:%S", self.TempoCriacaoServidor))
+    -- Glassmorphism overlay
+    local glassOverlay = Instance.new("Frame")
+    glassOverlay.Size = UDim2.new(1, 0, 1, 0)
+    glassOverlay.BackgroundColor3 = Color3.fromRGB(26, 26, 46)
+    glassOverlay.BackgroundTransparency = 0.7
+    glassOverlay.BorderSizePixel = 0
+    glassOverlay.Parent = mainFrame
+    
+    self.UI.MainFrame = mainFrame
+    
+    -- TOPO
+    self:CreateTopSection(mainFrame)
+    
+    -- CONTEÚDO PRINCIPAL
+    self:CreateContentSection(mainFrame)
+    
+    -- RODAPÉ
+    self:CreateFooter(mainFrame)
+    
+    -- Tornar arrastável
+    self:MakeDraggable(mainFrame)
+    
+    return mainFrame
 end
 
--- Executa o script
-GHub:Iniciar()
+function GHub:CreateTopSection(parent)
+    local topFrame = Instance.new("Frame")
+    topFrame.Size = UDim2.new(1, 0, 0, 80)
+    topFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+    topFrame.BackgroundTransparency = 0.3
+    topFrame.BorderSizePixel = 0
+    topFrame.Parent = parent
+    
+    -- Título
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 40)
+    title.Position = UDim2.new(0, 0, 0, 5)
+    title.BackgroundTransparency = 1
+    title.Text = "GHub"
+    title.TextColor3 = Color3.fromRGB(150, 180, 255)
+    title.TextSize = 32
+    title.Font = Enum.Font.GothamBold
+    title.TextXAlignment = Enum.TextXAlignment.Center
+    title.Parent = topFrame
+    
+    -- Subtítulo
+    local subtitle = Instance.new("TextLabel")
+    subtitle.Size = UDim2.new(1, 0, 0, 25)
+    subtitle.Position = UDim2.new(0, 0, 0, 42)
+    subtitle.BackgroundTransparency = 1
+    subtitle.Text = "Auto Farm Chest"
+    subtitle.TextColor3 = Color3.fromRGB(200, 200, 230)
+    subtitle.TextSize = 16
+    subtitle.Font = Enum.Font.GothamMedium
+    subtitle.TextXAlignment = Enum.TextXAlignment.Center
+    subtitle.Parent = topFrame
+    
+    -- Botão Minimizar
+    local minButton = Instance.new("TextButton")
+    minButton.Size = UDim2.new(0, 30, 0, 30)
+    minButton.Position = UDim2.new(1, -40, 0, 5)
+    minButton.BackgroundColor3 = Color3.fromRGB(20, 20, 40)
+    minButton.BackgroundTransparency = 0.3
+    minButton.Text = "−"
+    minButton.TextColor3 = Color3.fromRGB(200, 200, 230)
+    minButton.TextSize = 20
+    minButton.Font = Enum.Font.GothamBold
+    minButton.BorderSizePixel = 0
+    minButton.Parent = topFrame
+    
+    -- Corner do botão
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 8)
+    btnCorner.Parent = minButton
+    
+    minButton.MouseButton1Click:Connect(function()
+        self:ToggleMinimize()
+    end)
+end
+
+function GHub:CreateContentSection(parent)
+    local contentFrame = Instance.new("Frame")
+    contentFrame.Size = UDim2.new(1, 0, 1, -120)
+    contentFrame.Position = UDim2.new(0, 0, 0, 80)
+    contentFrame.BackgroundTransparency = 1
+    contentFrame.Parent = parent
+    
+    -- ScrollingFrame para conteúdo rolável
+    local scrollFrame = Instance.new("ScrollingFrame")
+    scrollFrame.Size = UDim2.new(1, 0, 1, 0)
+    scrollFrame.BackgroundTransparency = 1
+    scrollFrame.BorderSizePixel = 0
+    scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 400)
+    scrollFrame.ScrollBarThickness = 3
+    scrollFrame.ScrollBarImageColor3 = Color3.fromRGB(108, 140, 255)
+    scrollFrame.Parent = contentFrame
+    
+    local contentContainer = Instance.new("Frame")
+    contentContainer.Size = UDim2.new(1, 0, 0, 400)
+    contentContainer.BackgroundTransparency = 1
+    contentContainer.Parent = scrollFrame
+    
+    -- Botão Auto Farm
+    local autoFarmButton = Instance.new("TextButton")
+    autoFarmButton.Size = UDim2.new(0, 200, 0, 45)
+    autoFarmButton.Position = UDim2.new(0.5, -100, 0, 10)
+    autoFarmButton.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+    autoFarmButton.BackgroundTransparency = 0.3
+    autoFarmButton.Text = "ATIVAR AUTO FARM"
+    autoFarmButton.TextColor3 = Color3.fromRGB(200, 200, 230)
+    autoFarmButton.TextSize = 14
+    autoFarmButton.Font = Enum.Font.GothamBold
+    autoFarmButton.BorderSizePixel = 0
+    autoFarmButton.Parent = contentContainer
+    
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 12)
+    btnCorner.Parent = autoFarmButton
+    
+    -- Botão Parar ao Encontrar Item
+    local stopButton = Instance.new("TextButton")
+    stopButton.Size = UDim2.new(0, 200, 0, 35)
+    stopButton.Position = UDim2.new(0.5, -100, 0, 65)
+    stopButton.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+    stopButton.BackgroundTransparency = 0.3
+    stopButton.Text = "PARAR AO ENCONTRAR ITEM: OFF"
+    stopButton.TextColor3 = Color3.fromRGB(200, 200, 230)
+    stopButton.TextSize = 13
+    stopButton.Font = Enum.Font.GothamMedium
+    stopButton.BorderSizePixel = 0
+    stopButton.Parent = contentContainer
+    
+    local stopCorner = Instance.new("UICorner")
+    stopCorner.CornerRadius = UDim.new(0, 12)
+    stopCorner.Parent = stopButton
+    
+    -- Status Auto Farm
+    local statusAuto = Instance.new("TextLabel")
+    statusAuto.Size = UDim2.new(0, 150, 0, 25)
+    statusAuto.Position = UDim2.new(0.5, -75, 0, 110)
+    statusAuto.BackgroundTransparency = 1
+    statusAuto.Text = "STATUS: OFF"
+    statusAuto.TextColor3 = Color3.fromRGB(255, 80, 80)
+    statusAuto.TextSize = 13
+    statusAuto.Font = Enum.Font.GothamMedium
+    statusAuto.TextXAlignment = Enum.TextXAlignment.Center
+    statusAuto.Parent = contentContainer
+    
+    -- Status Parar Item
+    local statusStop = Instance.new("TextLabel")
+    statusStop.Size = UDim2.new(0, 150, 0, 25)
+    statusStop.Position = UDim2.new(0.5, -75, 0, 140)
+    statusStop.BackgroundTransparency = 1
+    statusStop.Text = "PARAR ITEM: OFF"
+    statusStop.TextColor3 = Color3.fromRGB(200, 200, 230)
+    statusStop.TextSize = 12
+    statusStop.Font = Enum.Font.GothamMedium
+    statusStop.TextXAlignment = Enum.TextXAlignment.Center
+    statusStop.Parent = contentContainer
+    
+    -- Controle de Velocidade
+    local speedLabel = Instance.new("TextLabel")
+    speedLabel.Size = UDim2.new(0, 200, 0, 20)
+    speedLabel.Position = UDim2.new(0.5, -100, 0, 175)
+    speedLabel.BackgroundTransparency = 1
+    speedLabel.Text = "VEL: 25"
+    speedLabel.TextColor3 = Color3.fromRGB(200, 200, 230)
+    speedLabel.TextSize = 13
+    speedLabel.Font = Enum.Font.GothamMedium
+    speedLabel.TextXAlignment = Enum.TextXAlignment.Center
+    speedLabel.Parent = contentContainer
+    
+    -- Slider
+    local sliderFrame = Instance.new("Frame")
+    sliderFrame.Size = UDim2.new(0, 200, 0, 20)
+    sliderFrame.Position = UDim2.new(0.5, -100, 0, 200)
+    sliderFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+    sliderFrame.BackgroundTransparency = 0.3
+    sliderFrame.BorderSizePixel = 0
+    sliderFrame.Parent = contentContainer
+    
+    local sliderCorner = Instance.new("UICorner")
+    sliderCorner.CornerRadius = UDim.new(0, 2)
+    sliderCorner.Parent = sliderFrame
+    
+    -- Progresso do slider
+    local sliderProgress = Instance.new("Frame")
+    sliderProgress.Size = UDim2.new(0.5, 0, 1, 0)
+    sliderProgress.BackgroundColor3 = Color3.fromRGB(100, 130, 255)
+    sliderProgress.BorderSizePixel = 0
+    sliderProgress.Parent = sliderFrame
+    
+    local progressCorner = Instance.new("UICorner")
+    progressCorner.CornerRadius = UDim.new(0, 2)
+    progressCorner.Parent = sliderProgress
+    
+    -- Botão do slider
+    local sliderButton = Instance.new("TextButton")
+    sliderButton.Size = UDim2.new(0, 16, 0, 16)
+    sliderButton.Position = UDim2.new(0.5, -8, 0, 2)
+    sliderButton.BackgroundColor3 = Color3.fromRGB(108, 140, 255)
+    sliderButton.Text = ""
+    sliderButton.BorderSizePixel = 0
+    sliderButton.Parent = sliderFrame
+    
+    local buttonCorner = Instance.new("UICorner")
+    buttonCorner.CornerRadius = UDim.new(0, 8)
+    buttonCorner.Parent = sliderButton
+    
+    -- Contador de Tempo do Servidor
+    local timeLabel = Instance.new("TextLabel")
+    timeLabel.Size = UDim2.new(0, 250, 0, 30)
+    timeLabel.Position = UDim2.new(0.5, -125, 0, 235)
+    timeLabel.BackgroundTransparency = 1
+    timeLabel.Text = "SERVIDOR ATIVO: 00:00:00"
+    timeLabel.TextColor3 = Color3.fromRGB(200, 200, 230)
+    timeLabel.TextSize = 13
+    timeLabel.Font = Enum.Font.GothamMedium
+    timeLabel.TextXAlignment = Enum.TextXAlignment.Center
+    timeLabel.Parent = contentContainer
+    
+    -- ============================================
+    -- EVENTOS DA INTERFACE
+    -- ============================================
+    
+    -- Auto Farm Button
+    autoFarmButton.MouseButton1Click:Connect(function()
+        self.AutoFarmActive = not self.AutoFarmActive
+        
+        if self.AutoFarmActive then
+            autoFarmButton.Text = "DESATIVAR AUTO FARM"
+            autoFarmButton.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+            autoFarmButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+            statusAuto.Text = "STATUS: ON"
+            statusAuto.TextColor3 = Color3.fromRGB(80, 255, 80)
+            
+            -- Iniciar loop em uma thread separada
+            task.spawn(function()
+                self:AutoFarmLoop()
+            end)
+        else
+            autoFarmButton.Text = "ATIVAR AUTO FARM"
+            autoFarmButton.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+            autoFarmButton.TextColor3 = Color3.fromRGB(200, 200, 230)
+            statusAuto.Text = "STATUS: OFF"
+            statusAuto.TextColor3 = Color3.fromRGB(255, 80, 80)
+        end
+    end)
+    
+    -- Stop on Item Button
+    stopButton.MouseButton1Click:Connect(function()
+        self.StopOnItem = not self.StopOnItem
+        
+        if self.StopOnItem then
+            stopButton.Text = "PARAR AO ENCONTRAR ITEM: ON"
+            stopButton.BackgroundColor3 = Color3.fromRGB(50, 180, 50)
+            statusStop.Text = "PARAR ITEM: ON"
+            statusStop.TextColor3 = Color3.fromRGB(80, 255, 80)
+        else
+            stopButton.Text = "PARAR AO ENCONTRAR ITEM: OFF"
+            stopButton.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+            statusStop.Text = "PARAR ITEM: OFF"
+            statusStop.TextColor3 = Color3.fromRGB(200, 200, 230)
+        end
+    end)
+    
+    -- Slider Interativo
+    local isDragging = false
+    local sliderValue = 25
+    
+    sliderButton.MouseButton1Down:Connect(function()
+        isDragging = true
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            isDragging = false
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local mousePos = input.Position
+            local sliderPos = sliderFrame.AbsolutePosition
+            local sliderSize = sliderFrame.AbsoluteSize
+            
+            local relativeX = (mousePos.X - sliderPos.X) / sliderSize.X
+            relativeX = math.clamp(relativeX, 0, 1)
+            
+            sliderValue = math.floor(relativeX * 40 + 10)
+            sliderValue = math.clamp(sliderValue, 10, 50)
+            
+            -- Atualizar slider
+            sliderProgress.Size = UDim2.new(relativeX, 0, 1, 0)
+            sliderButton.Position = UDim2.new(relativeX, -8, 0, 2)
+            
+            -- Atualizar label
+            speedLabel.Text = "VEL: " .. tostring(sliderValue)
+            
+            -- Atualizar velocidade
+            self.Speed = sliderValue
+        end
+    end)
+    
+    -- Armazenar referências para atualização
+    self.UI.AutoFarmButton = autoFarmButton
+    self.UI.StopButton = stopButton
+    self.UI.StatusAuto = statusAuto
+    self.UI.S
