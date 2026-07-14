@@ -6,6 +6,7 @@
     - Coleta automática
     - Detecção de itens raros
     - Velocidade ajustável (10-50)
+    - Interface moderna com status detalhado
 ]]
 
 local Players = game:GetService("Players")
@@ -28,14 +29,28 @@ local isFlying = false
 local bodyVelocity = nil
 local collectedRareItems = {}
 local chestCooldown = {}
+local chestCount = 0
+local collectedCount = 0
 
 -- Criar BodyVelocity para voo
 function createFly()
-    if bodyVelocity then bodyVelocity:Destroy() end
+    if bodyVelocity then 
+        bodyVelocity:Destroy()
+        bodyVelocity = nil
+    end
+    
     bodyVelocity = Instance.new("BodyVelocity")
     bodyVelocity.MaxForce = Vector3.new(4000, 4000, 4000)
-    bodyVelocity.P = 1000
+    bodyVelocity.P = 2000
     bodyVelocity.Parent = RootPart
+    
+    -- Adicionar BodyGyro para estabilidade
+    local bodyGyro = Instance.new("BodyGyro")
+    bodyGyro.MaxTorque = Vector3.new(4000, 4000, 4000)
+    bodyGyro.P = 2000
+    bodyGyro.CFrame = RootPart.CFrame
+    bodyGyro.Parent = RootPart
+    
     return bodyVelocity
 end
 
@@ -48,17 +63,21 @@ function flyToPosition(targetPos)
     end
     
     local direction = (targetPos - RootPart.Position).Unit
-    local distance = (targetPos - RootPart.Position).Magnitude
+    local distance = (RootPart.Position - targetPos).Magnitude
     
     if distance < 3 then
+        bodyVelocity.Velocity = Vector3.new(0, 0, 0)
         return true
     end
     
-    bodyVelocity.Velocity = direction * flySpeed * 2
+    -- Velocidade base com aceleração suave
+    local speed = math.min(flySpeed * 2, distance * 0.5 + 5)
+    bodyVelocity.Velocity = direction * speed
     
-    -- Pequeno hover para estabilidade
-    if RootPart.Position.Y < targetPos.Y - 1 then
-        bodyVelocity.Velocity = bodyVelocity.Velocity + Vector3.new(0, flySpeed * 0.5, 0)
+    -- Manter altura
+    local heightDiff = targetPos.Y - RootPart.Position.Y
+    if math.abs(heightDiff) > 2 then
+        bodyVelocity.Velocity = bodyVelocity.Velocity + Vector3.new(0, heightDiff * 0.3, 0)
     end
     
     return false
@@ -67,10 +86,10 @@ end
 -- Função para encontrar baús
 function findChests()
     local chests = {}
-    local ignoreList = {"Sword", "Gun", "Fruit", "Accessory"}
+    local ignoreList = {"Sword", "Gun", "Fruit", "Accessory", "Boat", "Ship"}
     
     for _, v in ipairs(Workspace:GetDescendants()) do
-        if v:IsA("BasePart") and v.Name:find("Chest") then
+        if v:IsA("BasePart") and v.Name and v.Name:find("Chest") then
             local isValid = true
             for _, ignore in ipairs(ignoreList) do
                 if v.Name:find(ignore) then
@@ -78,7 +97,9 @@ function findChests()
                     break
                 end
             end
-            if isValid and v.Parent and v.Parent:FindFirstChild("TouchInterest") then
+            -- Verificar se o baú está ativo e no mundo
+            if isValid and v.Parent and v.Parent:FindFirstChild("TouchInterest") and 
+               v.Position.Y > -100 and v.Position.Y < 500 then
                 table.insert(chests, v)
             end
         end
@@ -98,13 +119,13 @@ function getClosestChest()
         if chest and chest.Parent and chest:IsA("BasePart") then
             -- Verificar se o baú está no cooldown
             if chestCooldown[chest] and chestCooldown[chest] > tick() then
-                continue
-            end
-            
-            local dist = (chest.Position - playerPos).Magnitude
-            if dist < minDist and dist > 2 then
-                minDist = dist
-                closest = chest
+                -- Continuar para o próximo
+            else
+                local dist = (chest.Position - playerPos).Magnitude
+                if dist < minDist and dist > 1.5 then
+                    minDist = dist
+                    closest = chest
+                end
             end
         end
     end
@@ -117,42 +138,61 @@ function collectChest(chest)
     if not chest or not chest.Parent then return false end
     
     currentTarget = chest
+    StatusLabel.Text = "🎯 Indo para o baú..."
     
     -- Voar para o baú com offset
-    local targetPos = chest.Position + Vector3.new(0, 3, 0)
+    local targetPos = chest.Position + Vector3.new(0, 2.5, 0)
     local startTime = tick()
-    local maxAttempts = 30 -- 3 segundos
+    local maxAttempts = 5 -- 5 segundos
     
-    while (RootPart.Position - chest.Position).Magnitude > 5 do
-        if not isFarming then return false end
-        if tick() - startTime > maxAttempts then break end
+    while (RootPart.Position - chest.Position).Magnitude > 4 do
+        if not isFarming then 
+            StatusLabel.Text = "⏸️ Farm pausado"
+            return false 
+        end
+        if tick() - startTime > maxAttempts then 
+            StatusLabel.Text = "⏰ Tempo esgotado"
+            break 
+        end
         
         flyToPosition(targetPos)
         RunService.Heartbeat:Wait()
     end
     
-    -- Verificar itens raros após coletar
-    if checkRareItems then
-        wait(0.5) -- Dar tempo para o item aparecer no inventário
-        local backpack = Player.Backpack
-        for _, item in ipairs(backpack:GetChildren()) do
-            if item:IsA("Tool") then
-                if item.Name:find("Fist") or item.Name:find("Chalice") or 
-                   item.Name:find("Darkness") or item.Name:find("God") then
-                    StatusLabel.Text = "⚠️ ITEM RARO ENCONTRADO!"
-                    isFarming = false
-                    ToggleButton.Text = "▶️ Iniciar Farm"
-                    ToggleButton.BackgroundColor3 = Color3.fromRGB(45, 45, 65)
-                    return false
+    -- Tentar coletar
+    StatusLabel.Text = "📦 Coletando..."
+    local collected = false
+    
+    -- Simular coleta (tocar o baú)
+    if (RootPart.Position - chest.Position).Magnitude < 6 then
+        collected = true
+        chestCooldown[chest] = tick() + 2
+        collectedCount = collectedCount + 1
+        
+        StatusLabel.Text = "✅ Baú coletado! (" .. collectedCount .. ")"
+        
+        -- Verificar itens raros após coletar
+        if checkRareItems then
+            wait(0.8) -- Dar tempo para o item aparecer no inventário
+            local backpack = Player.Backpack
+            for _, item in ipairs(backpack:GetChildren()) do
+                if item:IsA("Tool") then
+                    local itemName = item.Name:lower()
+                    if itemName:find("fist") or itemName:find("chalice") or 
+                       itemName:find("darkness") or itemName:find("god") or
+                       itemName:find("rare") then
+                        StatusLabel.Text = "⚠️ ITEM RARO ENCONTRADO!"
+                        isFarming = false
+                        ToggleButton.Text = "▶️ Iniciar Farm"
+                        ToggleButton.BackgroundColor3 = Color3.fromRGB(45, 45, 65)
+                        return false
+                    end
                 end
             end
         end
     end
     
-    -- Colocar baú em cooldown
-    chestCooldown[chest] = tick() + 5
-    
-    return true
+    return collected
 end
 
 -- Função principal de farm
@@ -171,10 +211,9 @@ function farmLoop()
         local chest = getClosestChest()
         
         if chest then
-            StatusLabel.Text = "📦 Coletando baú..."
             local success = collectChest(chest)
-            if success then
-                StatusLabel.Text = "✅ Baú coletado!"
+            if not success then
+                wait(0.1)
             end
         else
             StatusLabel.Text = "⏳ Aguardando baús spawnarem..."
@@ -182,6 +221,7 @@ function farmLoop()
             if bodyVelocity then
                 bodyVelocity.Velocity = Vector3.new(0, 0, 0)
             end
+            wait(0.5)
         end
         
         wait(0.1)
@@ -191,6 +231,7 @@ function farmLoop()
     if bodyVelocity then
         bodyVelocity.Velocity = Vector3.new(0, 0, 0)
     end
+    StatusLabel.Text = "⏸️ Farm pausado"
 end
 
 -- UI Interface
@@ -205,7 +246,7 @@ MainFrame.BackgroundTransparency = 0.1
 MainFrame.BorderColor3 = Color3.fromRGB(255, 255, 255)
 MainFrame.BorderSizePixel = 0
 MainFrame.Position = UDim2.new(0.85, 0, 0.5, -180)
-MainFrame.Size = UDim2.new(0, 280, 0, 400)
+MainFrame.Size = UDim2.new(0, 280, 0, 420)
 MainFrame.Active = true
 MainFrame.Draggable = true
 
@@ -286,6 +327,7 @@ local ToggleButton = createButton(ScrollContainer, "▶️ Iniciar Farm", functi
     
     if isFarming then
         StatusLabel.Text = "🔄 Iniciando Farm..."
+        collectedCount = 0
         spawn(function()
             farmLoop()
         end)
@@ -352,18 +394,18 @@ for i, speed in ipairs(speeds) do
     end
 end
 
--- Status Label
+-- Status Label (MAIN)
 local StatusLabel = Instance.new("TextLabel")
 StatusLabel.Parent = ScrollContainer
 StatusLabel.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
 StatusLabel.BackgroundTransparency = 0.1
 StatusLabel.BorderColor3 = Color3.fromRGB(255, 255, 255)
 StatusLabel.BorderSizePixel = 0
-StatusLabel.Size = UDim2.new(1, 0, 0, 30)
+StatusLabel.Size = UDim2.new(1, 0, 0, 35)
 StatusLabel.Font = Enum.Font.Gotham
 StatusLabel.Text = "⏸️ Aguardando..."
 StatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-StatusLabel.TextSize = 13
+StatusLabel.TextSize = 14
 StatusLabel.TextXAlignment = Enum.TextXAlignment.Center
 StatusLabel.LayoutOrder = 4
 
@@ -376,7 +418,7 @@ ChestCounter.BorderColor3 = Color3.fromRGB(255, 255, 255)
 ChestCounter.BorderSizePixel = 0
 ChestCounter.Size = UDim2.new(1, 0, 0, 25)
 ChestCounter.Font = Enum.Font.Gotham
-ChestCounter.Text = "📦 Baús encontrados: 0"
+ChestCounter.Text = "📦 Baús disponíveis: 0 | Coletados: 0"
 ChestCounter.TextColor3 = Color3.fromRGB(200, 200, 200)
 ChestCounter.TextSize = 12
 ChestCounter.TextXAlignment = Enum.TextXAlignment.Center
@@ -384,10 +426,13 @@ ChestCounter.LayoutOrder = 5
 
 -- Atualizar contador de baús
 spawn(function()
-    while wait(0.5) do
+    while wait(0.3) do
         if isFarming then
             local count = #findChests()
-            ChestCounter.Text = "📦 Baús encontrados: " .. count
+            ChestCounter.Text = "📦 Baús disponíveis: " .. count .. " | Coletados: " .. collectedCount
+        else
+            local count = #findChests()
+            ChestCounter.Text = "📦 Baús disponíveis: " .. count .. " | Coletados: " .. collectedCount
         end
     end
 end)
@@ -427,3 +472,4 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 end)
 
 print("✅ Auto Farm Chest carregado! Pressione F para iniciar/parar.")
+print("📋 Status atualizado com informações detalhadas.")
