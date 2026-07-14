@@ -1,616 +1,553 @@
 --[[
-    GHub - Auto Farm Chest
-    Versão: 1.0
-    Plataforma: Roblox - Blox Fruits
-    
-    Script desenvolvido exclusivamente para sistema de Auto Farm Chest
-    Interface premium com design Glassmorphism e Dark Mode
---]]
+    GHUB - Blox Fruits Script
+    Auto Farm Chest com interface premium
+]]
 
--- Services
-local TweenService = game:GetService("TweenService")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
-local CoreGui = game:GetService("CoreGui")
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-
--- Configurações
-local GHub = {
-    Player = Players.LocalPlayer,
+-- Variáveis principais
+local GHUB = {
+    Player = game.Players.LocalPlayer,
     Character = nil,
     Humanoid = nil,
-    HumanoidRootPart = nil,
+    RootPart = nil,
+    TweenService = game:GetService("TweenService"),
+    RunService = game:GetService("RunService"),
+    UserInputService = game:GetService("UserInputService"),
+    VirtualInputManager = game:GetService("VirtualInputManager"),
+    TeleportService = game:GetService("TeleportService"),
+    CollectionService = game:GetService("CollectionService"),
     
-    -- Estado do Auto Farm
-    AutoFarmActive = false,
-    StopOnItem = false,
-    Speed = 25,
-    ChestsCollected = 0,
-    BlacklistedChests = {},
-    TargetChest = nil,
-    IsMoving = false,
-    
-    -- Tempo do servidor
-    ServerStartTime = tick(),
-    
-    -- Interface
-    UI = {
-        MainFrame = nil,
-        Minimized = false,
-        Dragging = false,
-        DragStart = nil,
-        StartPosition = nil
+    -- Configurações
+    Settings = {
+        AutoFarm = false,
+        TweenSpeed = 50,
+        CollectRadius = 50,
     },
     
-    -- Configurações do Tween
-    TweenConfig = {
-        MinTime = 1.5,
-        MaxTime = 4,
-        MinDistance = 10,
-        CollectDistance = 8,
-        EasingStyle = Enum.EasingStyle.Sine,
-        EasingDirection = Enum.EasingDirection.InOut
-    }
+    -- Stats
+    Stats = {
+        ChestsCollected = 0,
+        ServerTime = 0,
+        IsFarming = false,
+        FoundRare = false,
+    },
+    
+    -- Core
+    Chests = {},
+    CurrentTarget = nil,
+    Tween = nil,
+    Connections = {},
+    UI = nil,
 }
 
--- ============================================
--- FUNÇÕES AUXILIARES
--- ============================================
-
-function GHub:GetCharacter()
-    self.Character = self.Player.Character
-    if self.Character then
-        self.Humanoid = self.Character:FindFirstChild("Humanoid")
-        self.HumanoidRootPart = self.Character:FindFirstChild("HumanoidRootPart")
-    end
-    return self.Character ~= nil
-end
-
-function GHub:GetAllChests()
-    local chests = {}
-    -- Busca por baús no workspace
-    -- Adaptar conforme a nomenclatura dos baús no Blox Fruits
-    for _, obj in pairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") and obj.Name:lower():find("chest") or obj.Name:lower():find("baú") then
-            -- Verificar se não está na lista de proibidos
-            if not table.find(self.BlacklistedChests, obj) then
-                table.insert(chests, obj)
-            end
-        end
-    end
-    return chests
-end
-
-function GHub:FindNearestChest(chests)
-    if not self.HumanoidRootPart then return nil end
+-- Função para criar a interface
+function GHUB:CreateUI()
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "GHUB"
+    ScreenGui.Parent = game:GetService("CoreGui")
+    ScreenGui.ResetOnSpawn = false
     
-    local nearest = nil
-    local nearestDist = math.huge
-    local currentPos = self.HumanoidRootPart.Position
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Name = "MainFrame"
+    MainFrame.Parent = ScreenGui
+    MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+    MainFrame.BackgroundTransparency = 0.1
+    MainFrame.BorderSizePixel = 0
+    MainFrame.Size = UDim2.new(0, 450, 0, 550)
+    MainFrame.Position = UDim2.new(0.5, -225, 0.5, -275)
+    MainFrame.ClipsDescendants = true
     
-    for _, chest in pairs(chests) do
-        if chest and chest:IsA("BasePart") and chest.Parent then
-            local dist = (chest.Position - currentPos).Magnitude
-            if dist < nearestDist then
-                nearestDist = dist
-                nearest = chest
-            end
-        end
-    end
+    -- Efeito Glass
+    local GlassEffect = Instance.new("Frame")
+    GlassEffect.Name = "GlassEffect"
+    GlassEffect.Parent = MainFrame
+    GlassEffect.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    GlassEffect.BackgroundTransparency = 0.95
+    GlassEffect.Size = UDim2.new(1, 0, 1, 0)
+    GlassEffect.BorderSizePixel = 0
     
-    return nearest, nearestDist
-end
-
-function GHub:CalculateTweenTime(distance)
-    local time = distance / self.Speed
-    return math.clamp(time, self.TweenConfig.MinTime, self.TweenConfig.MaxTime)
-end
-
-function GHub:SimulateKeyPress(key)
-    VirtualInputManager:SendKeyEvent(true, key, false, nil)
-    task.wait(0.15)
-    VirtualInputManager:SendKeyEvent(false, key, false, nil)
-end
-
-function GHub:GetServerTime()
-    return tick() - self.ServerStartTime
-end
-
-function GHub:FormatTime(seconds)
-    local hours = math.floor(seconds / 3600)
-    local minutes = math.floor((seconds % 3600) / 60)
-    local secs = math.floor(seconds % 60)
-    return string.format("%02d:%02d:%02d", hours, minutes, secs)
-end
-
--- ============================================
--- LÓGICA DO AUTO FARM
--- ============================================
-
-function GHub:ClearBlacklist()
-    self.BlacklistedChests = {}
-end
-
-function GHub:CheckForItems(chest)
-    -- Verifica se há itens próximos ao baú
-    if not self.StopOnItem then return false end
+    -- Bordas com brilho
+    local BorderGlow = Instance.new("Frame")
+    BorderGlow.Name = "BorderGlow"
+    BorderGlow.Parent = MainFrame
+    BorderGlow.BackgroundColor3 = Color3.fromRGB(100, 50, 255)
+    BorderGlow.BackgroundTransparency = 0.8
+    BorderGlow.Size = UDim2.new(1, 0, 0, 2)
+    BorderGlow.Position = UDim2.new(0, 0, 0, 0)
+    BorderGlow.BorderSizePixel = 0
     
-    local items = {}
-    -- Adaptar para procurar itens dropados no Blox Fruits
-    for _, obj in pairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") and obj.Name:lower():find("item") then
-            if (obj.Position - chest.Position).Magnitude < 15 then
-                table.insert(items, obj)
-            end
-        end
-    end
+    -- Cantos arredondados
+    local Corner = Instance.new("UICorner")
+    Corner.Parent = MainFrame
+    Corner.CornerRadius = UDim.new(0, 12)
     
-    return #items > 0
-end
-
-function GHub:CollectChest(chest)
-    if not chest or not chest.Parent then return false end
+    -- Barra Superior
+    local TopBar = Instance.new("Frame")
+    TopBar.Name = "TopBar"
+    TopBar.Parent = MainFrame
+    TopBar.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+    TopBar.BackgroundTransparency = 0.3
+    TopBar.Size = UDim2.new(1, 0, 0, 40)
+    TopBar.BorderSizePixel = 0
     
-    -- Verificar distância
-    if not self.HumanoidRootPart then return false end
-    local dist = (chest.Position - self.HumanoidRootPart.Position).Magnitude
+    local TopCorner = Instance.new("UICorner")
+    TopCorner.Parent = TopBar
+    TopCorner.CornerRadius = UDim.new(0, 12)
     
-    if dist > self.TweenConfig.CollectDistance then
-        return false
-    end
-    
-    -- Delay humano
-    task.wait(0.2)
-    
-    -- Coletar
-    self:SimulateKeyPress(Enum.KeyCode.E)
-    
-    -- Delay após coleta
-    task.wait(0.3)
-    
-    -- Adicionar à lista de proibidos
-    table.insert(self.BlacklistedChests, chest)
-    self.ChestsCollected = self.ChestsCollected + 1
-    
-    return true
-end
-
-function GHub:MoveToChest(chest)
-    if not chest or not chest.Parent then return false end
-    if not self.HumanoidRootPart then return false end
-    
-    local dist = (chest.Position - self.HumanoidRootPart.Position).Magnitude
-    
-    -- Verificar distância mínima
-    if dist < self.TweenConfig.MinDistance then
-        return true -- Já está perto
-    end
-    
-    -- Calcular tempo de viagem
-    local tweenTime = self:CalculateTweenTime(dist)
-    
-    -- Configurar Tween
-    local tweenInfo = TweenInfo.new(
-        tweenTime,
-        self.TweenConfig.EasingStyle,
-        self.TweenConfig.EasingDirection
-    )
-    
-    local targetPosition = chest.Position + Vector3.new(0, 2, 0) -- Ajuste de altura
-    local tween = TweenService:Create(
-        self.HumanoidRootPart,
-        tweenInfo,
-        {CFrame = CFrame.new(targetPosition)}
-    )
-    
-    self.IsMoving = true
-    
-    -- Executar Tween
-    tween:Play()
-    tween.Completed:Wait()
-    
-    self.IsMoving = false
-    return true
-end
-
-function GHub:AutoFarmLoop()
-    while self.AutoFarmActive do
-        -- Verificar personagem
-        if not self:GetCharacter() then
-            task.wait(1)
-            continue
-        end
-        
-        -- Encontrar baús
-        local chests = self:GetAllChests()
-        
-        if #chests == 0 then
-            task.wait(1)
-            continue
-        end
-        
-        -- Selecionar baú mais próximo
-        local target, distance = self:FindNearestChest(chests)
-        
-        if not target then
-            task.wait(0.5)
-            continue
-        end
-        
-        self.TargetChest = target
-        
-        -- Mover para o baú
-        local moved = self:MoveToChest(target)
-        
-        if not moved then
-            task.wait(0.5)
-            continue
-        end
-        
-        -- Verificar itens (se ativado)
-        if self:CheckForItems(target) then
-            self.AutoFarmActive = false
-            self:UpdateUIStatus()
-            break
-        end
-        
-        -- Coletar
-        local collected = self:CollectChest(target)
-        
-        if not collected then
-            -- Se não coletou, adicionar à lista de proibidos
-            table.insert(self.BlacklistedChests, target)
-        end
-        
-        -- Pequena pausa entre ações
-        task.wait(0.2)
-        
-        -- Limpar lista de proibidos a cada 5 minutos
-        if self.ChestsCollected % 20 == 0 then
-            self:ClearBlacklist()
-        end
-    end
-    
-    self:UpdateUIStatus()
-end
-
--- ============================================
--- INTERFACE GRÁFICA
--- ============================================
-
-function GHub:CreateUI()
-    -- Frame principal com Glassmorphism
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 380, 0, 520)
-    mainFrame.Position = UDim2.new(0.5, -190, 0.5, -260)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
-    mainFrame.BackgroundTransparency = 0.85
-    mainFrame.BorderSizePixel = 0
-    mainFrame.ClipsDescendants = true
-    mainFrame.Parent = CoreGui
-    
-    -- Cantos arredondados e sombra
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 16)
-    corner.Parent = mainFrame
-    
-    local shadow = Instance.new("Frame")
-    shadow.Size = UDim2.new(1, 0, 1, 0)
-    shadow.Position = UDim2.new(0, 0, 0, 5)
-    shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    shadow.BackgroundTransparency = 0.5
-    shadow.BorderSizePixel = 0
-    shadow.ZIndex = -1
-    shadow.Parent = mainFrame
-    
-    -- Glassmorphism overlay
-    local glassOverlay = Instance.new("Frame")
-    glassOverlay.Size = UDim2.new(1, 0, 1, 0)
-    glassOverlay.BackgroundColor3 = Color3.fromRGB(26, 26, 46)
-    glassOverlay.BackgroundTransparency = 0.7
-    glassOverlay.BorderSizePixel = 0
-    glassOverlay.Parent = mainFrame
-    
-    self.UI.MainFrame = mainFrame
-    
-    -- TOPO
-    self:CreateTopSection(mainFrame)
-    
-    -- CONTEÚDO PRINCIPAL
-    self:CreateContentSection(mainFrame)
-    
-    -- RODAPÉ
-    self:CreateFooter(mainFrame)
-    
-    -- Tornar arrastável
-    self:MakeDraggable(mainFrame)
-    
-    return mainFrame
-end
-
-function GHub:CreateTopSection(parent)
-    local topFrame = Instance.new("Frame")
-    topFrame.Size = UDim2.new(1, 0, 0, 80)
-    topFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
-    topFrame.BackgroundTransparency = 0.3
-    topFrame.BorderSizePixel = 0
-    topFrame.Parent = parent
+    -- Logo
+    local Logo = Instance.new("TextLabel")
+    Logo.Name = "Logo"
+    Logo.Parent = TopBar
+    Logo.BackgroundTransparency = 1
+    Logo.Position = UDim2.new(0, 10, 0, 5)
+    Logo.Size = UDim2.new(0, 30, 0, 30)
+    Logo.Text = "⚡"
+    Logo.TextColor3 = Color3.fromRGB(100, 50, 255)
+    Logo.TextSize = 24
+    Logo.Font = Enum.Font.SourceSansBold
     
     -- Título
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 40)
-    title.Position = UDim2.new(0, 0, 0, 5)
-    title.BackgroundTransparency = 1
-    title.Text = "GHub"
-    title.TextColor3 = Color3.fromRGB(150, 180, 255)
-    title.TextSize = 32
-    title.Font = Enum.Font.GothamBold
-    title.TextXAlignment = Enum.TextXAlignment.Center
-    title.Parent = topFrame
+    local Title = Instance.new("TextLabel")
+    Title.Name = "Title"
+    Title.Parent = TopBar
+    Title.BackgroundTransparency = 1
+    Title.Position = UDim2.new(0, 45, 0, 5)
+    Title.Size = UDim2.new(0, 100, 0, 30)
+    Title.Text = "GHUB"
+    Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Title.TextSize = 22
+    Title.Font = Enum.Font.SourceSansBold
+    Title.TextXAlignment = Enum.TextXAlignment.Left
     
-    -- Subtítulo
-    local subtitle = Instance.new("TextLabel")
-    subtitle.Size = UDim2.new(1, 0, 0, 25)
-    subtitle.Position = UDim2.new(0, 0, 0, 42)
-    subtitle.BackgroundTransparency = 1
-    subtitle.Text = "Auto Farm Chest"
-    subtitle.TextColor3 = Color3.fromRGB(200, 200, 230)
-    subtitle.TextSize = 16
-    subtitle.Font = Enum.Font.GothamMedium
-    subtitle.TextXAlignment = Enum.TextXAlignment.Center
-    subtitle.Parent = topFrame
+    -- Botões da barra superior
+    local MinimizeBtn = Instance.new("TextButton")
+    MinimizeBtn.Name = "MinimizeBtn"
+    MinimizeBtn.Parent = TopBar
+    MinimizeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+    MinimizeBtn.BackgroundTransparency = 0.3
+    MinimizeBtn.Position = UDim2.new(1, -70, 0, 8)
+    MinimizeBtn.Size = UDim2.new(0, 25, 0, 25)
+    MinimizeBtn.Text = "−"
+    MinimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    MinimizeBtn.TextSize = 18
+    MinimizeBtn.Font = Enum.Font.SourceSansBold
+    MinimizeBtn.BorderSizePixel = 0
     
-    -- Botão Minimizar
-    local minButton = Instance.new("TextButton")
-    minButton.Size = UDim2.new(0, 30, 0, 30)
-    minButton.Position = UDim2.new(1, -40, 0, 5)
-    minButton.BackgroundColor3 = Color3.fromRGB(20, 20, 40)
-    minButton.BackgroundTransparency = 0.3
-    minButton.Text = "−"
-    minButton.TextColor3 = Color3.fromRGB(200, 200, 230)
-    minButton.TextSize = 20
-    minButton.Font = Enum.Font.GothamBold
-    minButton.BorderSizePixel = 0
-    minButton.Parent = topFrame
+    local MinCorner = Instance.new("UICorner")
+    MinCorner.Parent = MinimizeBtn
+    MinCorner.CornerRadius = UDim.new(0, 6)
     
-    -- Corner do botão
-    local btnCorner = Instance.new("UICorner")
-    btnCorner.CornerRadius = UDim.new(0, 8)
-    btnCorner.Parent = minButton
+    local CloseBtn = Instance.new("TextButton")
+    CloseBtn.Name = "CloseBtn"
+    CloseBtn.Parent = TopBar
+    CloseBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    CloseBtn.BackgroundTransparency = 0.3
+    CloseBtn.Position = UDim2.new(1, -35, 0, 8)
+    CloseBtn.Size = UDim2.new(0, 25, 0, 25)
+    CloseBtn.Text = "✕"
+    CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    CloseBtn.TextSize = 14
+    CloseBtn.Font = Enum.Font.SourceSansBold
+    CloseBtn.BorderSizePixel = 0
     
-    minButton.MouseButton1Click:Connect(function()
-        self:ToggleMinimize()
-    end)
-end
-
-function GHub:CreateContentSection(parent)
-    local contentFrame = Instance.new("Frame")
-    contentFrame.Size = UDim2.new(1, 0, 1, -120)
-    contentFrame.Position = UDim2.new(0, 0, 0, 80)
-    contentFrame.BackgroundTransparency = 1
-    contentFrame.Parent = parent
+    local CloseCorner = Instance.new("UICorner")
+    CloseCorner.Parent = CloseBtn
+    CloseCorner.CornerRadius = UDim.new(0, 6)
     
-    -- ScrollingFrame para conteúdo rolável
-    local scrollFrame = Instance.new("ScrollingFrame")
-    scrollFrame.Size = UDim2.new(1, 0, 1, 0)
-    scrollFrame.BackgroundTransparency = 1
-    scrollFrame.BorderSizePixel = 0
-    scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 400)
-    scrollFrame.ScrollBarThickness = 3
-    scrollFrame.ScrollBarImageColor3 = Color3.fromRGB(108, 140, 255)
-    scrollFrame.Parent = contentFrame
+    -- Área de Conteúdo
+    local ContentArea = Instance.new("ScrollingFrame")
+    ContentArea.Name = "ContentArea"
+    ContentArea.Parent = MainFrame
+    ContentArea.BackgroundTransparency = 1
+    ContentArea.Position = UDim2.new(0, 0, 0, 50)
+    ContentArea.Size = UDim2.new(1, 0, 1, -55)
+    ContentArea.ScrollBarThickness = 4
+    ContentArea.ScrollBarImageColor3 = Color3.fromRGB(100, 50, 255)
+    ContentArea.BorderSizePixel = 0
     
-    local contentContainer = Instance.new("Frame")
-    contentContainer.Size = UDim2.new(1, 0, 0, 400)
-    contentContainer.BackgroundTransparency = 1
-    contentContainer.Parent = scrollFrame
+    local ContentList = Instance.new("UIListLayout")
+    ContentList.Parent = ContentArea
+    ContentList.SortOrder = Enum.SortOrder.LayoutOrder
+    ContentList.Padding = UDim.new(0, 10)
     
-    -- Botão Auto Farm
-    local autoFarmButton = Instance.new("TextButton")
-    autoFarmButton.Size = UDim2.new(0, 200, 0, 45)
-    autoFarmButton.Position = UDim2.new(0.5, -100, 0, 10)
-    autoFarmButton.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
-    autoFarmButton.BackgroundTransparency = 0.3
-    autoFarmButton.Text = "ATIVAR AUTO FARM"
-    autoFarmButton.TextColor3 = Color3.fromRGB(200, 200, 230)
-    autoFarmButton.TextSize = 14
-    autoFarmButton.Font = Enum.Font.GothamBold
-    autoFarmButton.BorderSizePixel = 0
-    autoFarmButton.Parent = contentContainer
+    -- Seção Auto Farm
+    local FarmSection = self:CreateSection(ContentArea, "⚙️ AUTO FARM")
     
-    local btnCorner = Instance.new("UICorner")
-    btnCorner.CornerRadius = UDim.new(0, 12)
-    btnCorner.Parent = autoFarmButton
+    -- Toggle Auto Farm
+    local ToggleFrame = Instance.new("Frame")
+    ToggleFrame.Name = "ToggleFrame"
+    ToggleFrame.Parent = FarmSection
+    ToggleFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    ToggleFrame.BackgroundTransparency = 0.5
+    ToggleFrame.Size = UDim2.new(1, -20, 0, 40)
+    ToggleFrame.Position = UDim2.new(0, 10, 0, 10)
+    ToggleFrame.BorderSizePixel = 0
     
-    -- Botão Parar ao Encontrar Item
-    local stopButton = Instance.new("TextButton")
-    stopButton.Size = UDim2.new(0, 200, 0, 35)
-    stopButton.Position = UDim2.new(0.5, -100, 0, 65)
-    stopButton.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
-    stopButton.BackgroundTransparency = 0.3
-    stopButton.Text = "PARAR AO ENCONTRAR ITEM: OFF"
-    stopButton.TextColor3 = Color3.fromRGB(200, 200, 230)
-    stopButton.TextSize = 13
-    stopButton.Font = Enum.Font.GothamMedium
-    stopButton.BorderSizePixel = 0
-    stopButton.Parent = contentContainer
+    local ToggleCorner = Instance.new("UICorner")
+    ToggleCorner.Parent = ToggleFrame
+    ToggleCorner.CornerRadius = UDim.new(0, 8)
     
-    local stopCorner = Instance.new("UICorner")
-    stopCorner.CornerRadius = UDim.new(0, 12)
-    stopCorner.Parent = stopButton
+    local ToggleLabel = Instance.new("TextLabel")
+    ToggleLabel.Name = "ToggleLabel"
+    ToggleLabel.Parent = ToggleFrame
+    ToggleLabel.BackgroundTransparency = 1
+    ToggleLabel.Position = UDim2.new(0, 10, 0, 0)
+    ToggleLabel.Size = UDim2.new(0, 150, 0, 40)
+    ToggleLabel.Text = "Auto Farm Chest"
+    ToggleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ToggleLabel.TextSize = 15
+    ToggleLabel.Font = Enum.Font.SourceSansSemiBold
+    ToggleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    
+    local ToggleBtn = Instance.new("TextButton")
+    ToggleBtn.Name = "ToggleBtn"
+    ToggleBtn.Parent = ToggleFrame
+    ToggleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+    ToggleBtn.Position = UDim2.new(1, -55, 0, 8)
+    ToggleBtn.Size = UDim2.new(0, 45, 0, 24)
+    ToggleBtn.Text = "OFF"
+    ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ToggleBtn.TextSize = 12
+    ToggleBtn.Font = Enum.Font.SourceSansBold
+    ToggleBtn.BorderSizePixel = 0
+    
+    local ToggleBtnCorner = Instance.new("UICorner")
+    ToggleBtnCorner.Parent = ToggleBtn
+    ToggleBtnCorner.CornerRadius = UDim.new(1, 0)
+    
+    -- Slider Velocidade
+    local SpeedFrame = Instance.new("Frame")
+    SpeedFrame.Name = "SpeedFrame"
+    SpeedFrame.Parent = FarmSection
+    SpeedFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    SpeedFrame.BackgroundTransparency = 0.5
+    SpeedFrame.Size = UDim2.new(1, -20, 0, 50)
+    SpeedFrame.Position = UDim2.new(0, 10, 0, 55)
+    SpeedFrame.BorderSizePixel = 0
+    
+    local SpeedCorner = Instance.new("UICorner")
+    SpeedCorner.Parent = SpeedFrame
+    SpeedCorner.CornerRadius = UDim.new(0, 8)
+    
+    local SpeedLabel = Instance.new("TextLabel")
+    SpeedLabel.Name = "SpeedLabel"
+    SpeedLabel.Parent = SpeedFrame
+    SpeedLabel.BackgroundTransparency = 1
+    SpeedLabel.Position = UDim2.new(0, 10, 0, 0)
+    SpeedLabel.Size = UDim2.new(0, 150, 0, 20)
+    SpeedLabel.Text = "Velocidade Tween"
+    SpeedLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    SpeedLabel.TextSize = 13
+    SpeedLabel.Font = Enum.Font.SourceSansSemiBold
+    SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
+    
+    local SpeedValue = Instance.new("TextLabel")
+    SpeedValue.Name = "SpeedValue"
+    SpeedValue.Parent = SpeedFrame
+    SpeedValue.BackgroundTransparency = 1
+    SpeedValue.Position = UDim2.new(1, -60, 0, 0)
+    SpeedValue.Size = UDim2.new(0, 50, 0, 20)
+    SpeedValue.Text = "50%"
+    SpeedValue.TextColor3 = Color3.fromRGB(100, 50, 255)
+    SpeedValue.TextSize = 13
+    SpeedValue.Font = Enum.Font.SourceSansBold
+    SpeedValue.TextXAlignment = Enum.TextXAlignment.Right
+    
+    local SpeedSlider = Instance.new("Frame")
+    SpeedSlider.Name = "SpeedSlider"
+    SpeedSlider.Parent = SpeedFrame
+    SpeedSlider.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+    SpeedSlider.Position = UDim2.new(0, 10, 0, 28)
+    SpeedSlider.Size = UDim2.new(1, -20, 0, 8)
+    SpeedSlider.BorderSizePixel = 0
+    
+    local SliderCorner = Instance.new("UICorner")
+    SliderCorner.Parent = SpeedSlider
+    SliderCorner.CornerRadius = UDim.new(1, 0)
+    
+    local SliderFill = Instance.new("Frame")
+    SliderFill.Name = "SliderFill"
+    SliderFill.Parent = SpeedSlider
+    SliderFill.BackgroundColor3 = Color3.fromRGB(100, 50, 255)
+    SliderFill.Size = UDim2.new(0.5, 0, 1, 0)
+    SliderFill.BorderSizePixel = 0
+    
+    local FillCorner = Instance.new("UICorner")
+    FillCorner.Parent = SliderFill
+    FillCorner.CornerRadius = UDim.new(1, 0)
+    
+    local SliderButton = Instance.new("TextButton")
+    SliderButton.Name = "SliderButton"
+    SliderButton.Parent = SpeedSlider
+    SliderButton.BackgroundColor3 = Color3.fromRGB(150, 100, 255)
+    SliderButton.Position = UDim2.new(0.5, -8, 0, -4)
+    SliderButton.Size = UDim2.new(0, 16, 0, 16)
+    SliderButton.Text = ""
+    SliderButton.BorderSizePixel = 0
+    
+    local SliderBtnCorner = Instance.new("UICorner")
+    SliderBtnCorner.Parent = SliderButton
+    SliderBtnCorner.CornerRadius = UDim.new(1, 0)
+    
+    -- Seção Status
+    local StatusSection = self:CreateSection(ContentArea, "📊 STATUS")
     
     -- Status Auto Farm
-    local statusAuto = Instance.new("TextLabel")
-    statusAuto.Size = UDim2.new(0, 150, 0, 25)
-    statusAuto.Position = UDim2.new(0.5, -75, 0, 110)
-    statusAuto.BackgroundTransparency = 1
-    statusAuto.Text = "STATUS: OFF"
-    statusAuto.TextColor3 = Color3.fromRGB(255, 80, 80)
-    statusAuto.TextSize = 13
-    statusAuto.Font = Enum.Font.GothamMedium
-    statusAuto.TextXAlignment = Enum.TextXAlignment.Center
-    statusAuto.Parent = contentContainer
+    local StatusFrame = Instance.new("Frame")
+    StatusFrame.Name = "StatusFrame"
+    StatusFrame.Parent = StatusSection
+    StatusFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    StatusFrame.BackgroundTransparency = 0.5
+    StatusFrame.Size = UDim2.new(1, -20, 0, 30)
+    StatusFrame.Position = UDim2.new(0, 10, 0, 10)
+    StatusFrame.BorderSizePixel = 0
     
-    -- Status Parar Item
-    local statusStop = Instance.new("TextLabel")
-    statusStop.Size = UDim2.new(0, 150, 0, 25)
-    statusStop.Position = UDim2.new(0.5, -75, 0, 140)
-    statusStop.BackgroundTransparency = 1
-    statusStop.Text = "PARAR ITEM: OFF"
-    statusStop.TextColor3 = Color3.fromRGB(200, 200, 230)
-    statusStop.TextSize = 12
-    statusStop.Font = Enum.Font.GothamMedium
-    statusStop.TextXAlignment = Enum.TextXAlignment.Center
-    statusStop.Parent = contentContainer
+    local StatusCorner = Instance.new("UICorner")
+    StatusCorner.Parent = StatusFrame
+    StatusCorner.CornerRadius = UDim.new(0, 8)
     
-    -- Controle de Velocidade
-    local speedLabel = Instance.new("TextLabel")
-    speedLabel.Size = UDim2.new(0, 200, 0, 20)
-    speedLabel.Position = UDim2.new(0.5, -100, 0, 175)
-    speedLabel.BackgroundTransparency = 1
-    speedLabel.Text = "VEL: 25"
-    speedLabel.TextColor3 = Color3.fromRGB(200, 200, 230)
-    speedLabel.TextSize = 13
-    speedLabel.Font = Enum.Font.GothamMedium
-    speedLabel.TextXAlignment = Enum.TextXAlignment.Center
-    speedLabel.Parent = contentContainer
+    local StatusLabel = Instance.new("TextLabel")
+    StatusLabel.Name = "StatusLabel"
+    StatusLabel.Parent = StatusFrame
+    StatusLabel.BackgroundTransparency = 1
+    StatusLabel.Position = UDim2.new(0, 10, 0, 0)
+    StatusLabel.Size = UDim2.new(0, 100, 0, 30)
+    StatusLabel.Text = "Status:"
+    StatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    StatusLabel.TextSize = 13
+    StatusLabel.Font = Enum.Font.SourceSansSemiBold
+    StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
     
-    -- Slider
-    local sliderFrame = Instance.new("Frame")
-    sliderFrame.Size = UDim2.new(0, 200, 0, 20)
-    sliderFrame.Position = UDim2.new(0.5, -100, 0, 200)
-    sliderFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
-    sliderFrame.BackgroundTransparency = 0.3
-    sliderFrame.BorderSizePixel = 0
-    sliderFrame.Parent = contentContainer
+    local StatusValue = Instance.new("TextLabel")
+    StatusValue.Name = "StatusValue"
+    StatusValue.Parent = StatusFrame
+    StatusValue.BackgroundTransparency = 1
+    StatusValue.Position = UDim2.new(0, 80, 0, 0)
+    StatusValue.Size = UDim2.new(0, 150, 0, 30)
+    StatusValue.Text = "Desativado"
+    StatusValue.TextColor3 = Color3.fromRGB(255, 100, 100)
+    StatusValue.TextSize = 13
+    StatusValue.Font = Enum.Font.SourceSansBold
+    StatusValue.TextXAlignment = Enum.TextXAlignment.Left
     
-    local sliderCorner = Instance.new("UICorner")
-    sliderCorner.CornerRadius = UDim.new(0, 2)
-    sliderCorner.Parent = sliderFrame
+    -- Tempo Servidor
+    local ServerTimeFrame = Instance.new("Frame")
+    ServerTimeFrame.Name = "ServerTimeFrame"
+    ServerTimeFrame.Parent = StatusSection
+    ServerTimeFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    ServerTimeFrame.BackgroundTransparency = 0.5
+    ServerTimeFrame.Size = UDim2.new(1, -20, 0, 30)
+    ServerTimeFrame.Position = UDim2.new(0, 10, 0, 45)
+    ServerTimeFrame.BorderSizePixel = 0
     
-    -- Progresso do slider
-    local sliderProgress = Instance.new("Frame")
-    sliderProgress.Size = UDim2.new(0.5, 0, 1, 0)
-    sliderProgress.BackgroundColor3 = Color3.fromRGB(100, 130, 255)
-    sliderProgress.BorderSizePixel = 0
-    sliderProgress.Parent = sliderFrame
+    local STCorner = Instance.new("UICorner")
+    STCorner.Parent = ServerTimeFrame
+    STCorner.CornerRadius = UDim.new(0, 8)
     
-    local progressCorner = Instance.new("UICorner")
-    progressCorner.CornerRadius = UDim.new(0, 2)
-    progressCorner.Parent = sliderProgress
+    local STLabel = Instance.new("TextLabel")
+    STLabel.Name = "STLabel"
+    STLabel.Parent = ServerTimeFrame
+    STLabel.BackgroundTransparency = 1
+    STLabel.Position = UDim2.new(0, 10, 0, 0)
+    STLabel.Size = UDim2.new(0, 150, 0, 30)
+    STLabel.Text = "Servidor criado há:"
+    STLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    STLabel.TextSize = 13
+    STLabel.Font = Enum.Font.SourceSansSemiBold
+    STLabel.TextXAlignment = Enum.TextXAlignment.Left
     
-    -- Botão do slider
-    local sliderButton = Instance.new("TextButton")
-    sliderButton.Size = UDim2.new(0, 16, 0, 16)
-    sliderButton.Position = UDim2.new(0.5, -8, 0, 2)
-    sliderButton.BackgroundColor3 = Color3.fromRGB(108, 140, 255)
-    sliderButton.Text = ""
-    sliderButton.BorderSizePixel = 0
-    sliderButton.Parent = sliderFrame
+    local STValue = Instance.new("TextLabel")
+    STValue.Name = "STValue"
+    STValue.Parent = ServerTimeFrame
+    STValue.BackgroundTransparency = 1
+    STValue.Position = UDim2.new(0, 150, 0, 0)
+    STValue.Size = UDim2.new(0, 200, 0, 30)
+    STValue.Text = "00h 00m 00s"
+    STValue.TextColor3 = Color3.fromRGB(100, 200, 255)
+    STValue.TextSize = 13
+    STValue.Font = Enum.Font.SourceSansBold
+    STValue.TextXAlignment = Enum.TextXAlignment.Left
     
-    local buttonCorner = Instance.new("UICorner")
-    buttonCorner.CornerRadius = UDim.new(0, 8)
-    buttonCorner.Parent = sliderButton
+    -- Baús Coletados
+    local ChestsFrame = Instance.new("Frame")
+    ChestsFrame.Name = "ChestsFrame"
+    ChestsFrame.Parent = StatusSection
+    ChestsFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    ChestsFrame.BackgroundTransparency = 0.5
+    ChestsFrame.Size = UDim2.new(1, -20, 0, 30)
+    ChestsFrame.Position = UDim2.new(0, 10, 0, 80)
+    ChestsFrame.BorderSizePixel = 0
     
-    -- Contador de Tempo do Servidor
-    local timeLabel = Instance.new("TextLabel")
-    timeLabel.Size = UDim2.new(0, 250, 0, 30)
-    timeLabel.Position = UDim2.new(0.5, -125, 0, 235)
-    timeLabel.BackgroundTransparency = 1
-    timeLabel.Text = "SERVIDOR ATIVO: 00:00:00"
-    timeLabel.TextColor3 = Color3.fromRGB(200, 200, 230)
-    timeLabel.TextSize = 13
-    timeLabel.Font = Enum.Font.GothamMedium
-    timeLabel.TextXAlignment = Enum.TextXAlignment.Center
-    timeLabel.Parent = contentContainer
+    local ChestCorner = Instance.new("UICorner")
+    ChestCorner.Parent = ChestsFrame
+    ChestCorner.CornerRadius = UDim.new(0, 8)
     
-    -- ============================================
-    -- EVENTOS DA INTERFACE
-    -- ============================================
+    local ChestLabel = Instance.new("TextLabel")
+    ChestLabel.Name = "ChestLabel"
+    ChestLabel.Parent = ChestsFrame
+    ChestLabel.BackgroundTransparency = 1
+    ChestLabel.Position = UDim2.new(0, 10, 0, 0)
+    ChestLabel.Size = UDim2.new(0, 150, 0, 30)
+    ChestLabel.Text = "Baús coletados:"
+    ChestLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    ChestLabel.TextSize = 13
+    ChestLabel.Font = Enum.Font.SourceSansSemiBold
+    ChestLabel.TextXAlignment = Enum.TextXAlignment.Left
     
-    -- Auto Farm Button
-    autoFarmButton.MouseButton1Click:Connect(function()
-        self.AutoFarmActive = not self.AutoFarmActive
-        
-        if self.AutoFarmActive then
-            autoFarmButton.Text = "DESATIVAR AUTO FARM"
-            autoFarmButton.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-            autoFarmButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-            statusAuto.Text = "STATUS: ON"
-            statusAuto.TextColor3 = Color3.fromRGB(80, 255, 80)
-            
-            -- Iniciar loop em uma thread separada
-            task.spawn(function()
-                self:AutoFarmLoop()
-            end)
+    local ChestValue = Instance.new("TextLabel")
+    ChestValue.Name = "ChestValue"
+    ChestValue.Parent = ChestsFrame
+    ChestValue.BackgroundTransparency = 1
+    ChestValue.Position = UDim2.new(0, 150, 0, 0)
+    ChestValue.Size = UDim2.new(0, 100, 0, 30)
+    ChestValue.Text = "0"
+    ChestValue.TextColor3 = Color3.fromRGB(255, 200, 100)
+    ChestValue.TextSize = 13
+    ChestValue.Font = Enum.Font.SourceSansBold
+    ChestValue.TextXAlignment = Enum.TextXAlignment.Left
+    
+    -- Armazenar referências
+    self.UI = {
+        ScreenGui = ScreenGui,
+        MainFrame = MainFrame,
+        ToggleBtn = ToggleBtn,
+        SpeedSlider = SpeedSlider,
+        SliderFill = SliderFill,
+        SliderButton = SliderButton,
+        SpeedValue = SpeedValue,
+        StatusValue = StatusValue,
+        STValue = STValue,
+        ChestValue = ChestValue,
+        MinimizeBtn = MinimizeBtn,
+        CloseBtn = CloseBtn,
+        BorderGlow = BorderGlow,
+    }
+    
+    -- Configurar eventos
+    self:SetupUIEvents()
+    self:StartServerTimeUpdater()
+    
+    return true
+end
+
+-- Função para criar seções
+function GHUB:CreateSection(parent, title)
+    local section = Instance.new("Frame")
+    section.Name = "Section"
+    section.Parent = parent
+    section.BackgroundTransparency = 1
+    section.Size = UDim2.new(1, 0, 0, 0)
+    section.AutomaticSize = Enum.AutomaticSize.Y
+    
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Name = "TitleLabel"
+    titleLabel.Parent = section
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Position = UDim2.new(0, 10, 0, 0)
+    titleLabel.Size = UDim2.new(0, 200, 0, 30)
+    titleLabel.Text = title
+    titleLabel.TextColor3 = Color3.fromRGB(100, 50, 255)
+    titleLabel.TextSize = 16
+    titleLabel.Font = Enum.Font.SourceSansBold
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    
+    local line = Instance.new("Frame")
+    line.Name = "Line"
+    line.Parent = section
+    line.BackgroundColor3 = Color3.fromRGB(100, 50, 255)
+    line.BackgroundTransparency = 0.5
+    line.Position = UDim2.new(0, 10, 0, 32)
+    line.Size = UDim2.new(1, -20, 0, 1)
+    line.BorderSizePixel = 0
+    
+    return section
+end
+
+-- Configurar eventos da UI
+function GHUB:SetupUIEvents()
+    -- Toggle Auto Farm
+    self.UI.ToggleBtn.MouseButton1Click:Connect(function()
+        self.Settings.AutoFarm = not self.Settings.AutoFarm
+        if self.Settings.AutoFarm then
+            self.UI.ToggleBtn.Text = "ON"
+            self.UI.ToggleBtn.BackgroundColor3 = Color3.fromRGB(100, 50, 255)
+            self.UI.StatusValue.Text = "Ativado"
+            self.UI.StatusValue.TextColor3 = Color3.fromRGB(100, 255, 100)
+            self:StartAutoFarm()
         else
-            autoFarmButton.Text = "ATIVAR AUTO FARM"
-            autoFarmButton.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
-            autoFarmButton.TextColor3 = Color3.fromRGB(200, 200, 230)
-            statusAuto.Text = "STATUS: OFF"
-            statusAuto.TextColor3 = Color3.fromRGB(255, 80, 80)
+            self.UI.ToggleBtn.Text = "OFF"
+            self.UI.ToggleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+            self.UI.StatusValue.Text = "Desativado"
+            self.UI.StatusValue.TextColor3 = Color3.fromRGB(255, 100, 100)
+            self:StopAutoFarm()
         end
     end)
     
-    -- Stop on Item Button
-    stopButton.MouseButton1Click:Connect(function()
-        self.StopOnItem = not self.StopOnItem
+    -- Slider de Velocidade
+    local dragging = false
+    self.UI.SliderButton.MouseButton1Down:Connect(function()
+        dragging = true
+    end)
+    
+    self.UI.SliderButton.MouseButton1Up:Connect(function()
+        dragging = false
+    end)
+    
+    self.UI.SliderButton.MouseLeave:Connect(function()
+        dragging = false
+    end)
+    
+    game:GetService("UserInputService").InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local slider = self.UI.SpeedSlider
+            local frame = slider.Parent
+            local x = input.Position.X - slider.AbsolutePosition.X
+            local width = slider.AbsoluteSize.X
+            local percent = math.clamp(x / width, 0, 1)
+            
+            self.UI.SliderFill.Size = UDim2.new(percent, 0, 1, 0)
+            self.UI.SliderButton.Position = UDim2.new(percent, -8, 0, -4)
+            
+            self.Settings.TweenSpeed = math.floor(percent * 100)
+            self.UI.SpeedValue.Text = tostring(self.Settings.TweenSpeed).."%"
+        end
+    end)
+    
+    -- Minimizar
+    self.UI.MinimizeBtn.MouseButton1Click:Connect(function()
+        self.UI.MainFrame.Visible = not self.UI.MainFrame.Visible
+    end)
+    
+    -- Fechar
+    self.UI.CloseBtn.MouseButton1Click:Connect(function()
+        self:Destroy()
+    end)
+    
+    -- Animação de hover nos botões
+    for _, btn in pairs({self.UI.ToggleBtn, self.UI.MinimizeBtn, self.UI.CloseBtn}) do
+        btn.MouseEnter:Connect(function()
+            btn.BackgroundTransparency = 0.1
+            btn:TweenSize(UDim2.new(btn.Size.X.Scale, btn.Size.X.Offset + 2, btn.Size.Y.Scale, btn.Size.Y.Offset + 2), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.2, true)
+        end)
+        btn.MouseLeave:Connect(function()
+            btn.BackgroundTransparency = 0.3
+            btn:TweenSize(UDim2.new(btn.Size.X.Scale, btn.Size.X.Offset - 2, btn.Size.Y.Scale, btn.Size.Y.Offset - 2), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.2, true)
+        end)
+    end
+end
+
+-- Atualizar tempo do servidor
+function GHUB:StartServerTimeUpdater()
+    local startTime = os.time()
+    self:AddConnection(self.RunService.Heartbeat:Connect(function()
+        local elapsed = os.time() - startTime
+        local hours = math.floor(elapsed / 3600)
+        local minutes = math.floor((elapsed % 3600) / 60)
+        local seconds = elapsed % 60
         
-        if self.StopOnItem then
-            stopButton.Text = "PARAR AO ENCONTRAR ITEM: ON"
-            stopButton.BackgroundColor3 = Color3.fromRGB(50, 180, 50)
-            statusStop.Text = "PARAR ITEM: ON"
-            statusStop.TextColor3 = Color3.fromRGB(80, 255, 80)
-        else
-            stopButton.Text = "PARAR AO ENCONTRAR ITEM: OFF"
-            stopButton.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
-            statusStop.Text = "PARAR ITEM: OFF"
-            statusStop.TextColor3 = Color3.fromRGB(200, 200, 230)
-        end
-    end)
-    
-    -- Slider Interativo
-    local isDragging = false
-    local sliderValue = 25
-    
-    sliderButton.MouseButton1Down:Connect(function()
-        isDragging = true
-    end)
-    
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            isDragging = false
-        end
-    end)
-    
-    UserInputService.InputChanged:Connect(function(input)
-        if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            local mousePos = input.Position
-            local sliderPos = sliderFrame.AbsolutePosition
-            local sliderSize = sliderFrame.AbsoluteSize
-            
-            local relativeX = (mousePos.X - sliderPos.X) / sliderSize.X
-            relativeX = math.clamp(relativeX, 0, 1)
-            
-            sliderValue = math.floor(relativeX * 40 + 10)
-            sliderValue = math.clamp(sliderValue, 10, 50)
-            
-            -- Atualizar slider
-            sliderProgress.Size = UDim2.new(relativeX, 0, 1, 0)
-            sliderButton.Position = UDim2.new(relativeX, -8, 0, 2)
-            
-            -- Atualizar label
-            speedLabel.Text = "VEL: " .. tostring(sliderValue)
-            
-            -- Atualizar velocidade
-            self.Speed = sliderValue
-        end
-    end)
-    
-    -- Armazenar referências para atualização
-    self.UI.AutoFarmButton = autoFarmButton
-    self.UI.StopButton = stopButton
-    self.UI.StatusAuto = statusAuto
-    self.UI.S
+        self.UI.STValue.Text = string.format("%02dh %02dm %02ds", hours, minutes, seconds)
+    end))
+end
+
+-- Sistema Auto Farm
+function GHUB:StartAutoFarm()
+    if self.Stats.IsFarming
