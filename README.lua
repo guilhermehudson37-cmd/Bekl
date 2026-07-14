@@ -5,16 +5,12 @@ local GHub = {
     Nome = "GHub",
     Versao = "v1.0",
     AutoFarm = false,
-    PararAoEncontrarItem = false,
-    TempoCriacaoServidor = nil,
+    TempoCriacaoServidor = nil, -- Será definido ao iniciar
     BausColetados = 0,
     Baus = {},
     BausProibidos = {},
-    ItensEncontrados = {},
     DistanciaMinima = 10,
     VelocidadeTween = 25,
-    VelocidadeMinima = 10,
-    VelocidadeMaxima = 50,
     Player = game.Players.LocalPlayer,
     Personagem = nil,
     Raiz = nil,
@@ -65,21 +61,6 @@ function GHub:ObterBauMaisProximo()
     return melhorBau
 end
 
-function GHub:VerificarItemNoBau(bau)
-    if not bau then return false end
-    
-    -- Verifica se há algum item próximo ao baú
-    for _, objeto in ipairs(workspace:GetDescendants()) do
-        if objeto:IsA("BasePart") and objeto:FindFirstChild("Handle") then
-            local distancia = (objeto.Position - bau.Position).Magnitude
-            if distancia < 5 then
-                return true
-            end
-        end
-    end
-    return false
-end
-
 function GHub:MoverParaBau(bau)
     if not bau or not self.Raiz then return end
 
@@ -106,13 +87,6 @@ function GHub:ColetarBau(bau)
 
     local distancia = (bau.Position - self.Raiz.Position).Magnitude
     if distancia < 8 then
-        -- Verifica se há item no baú antes de coletar
-        if self.PararAoEncontrarItem and self:VerificarItemNoBau(bau) then
-            self.AutoFarm = false
-            Interface:AtualizarStatus(false)
-            return false
-        end
-        
         task.wait(0.2)
         self.VirtualInput:SendKeyEvent(true, "E", false, game)
         task.wait(0.15)
@@ -152,17 +126,10 @@ local Interface = {
     FrameTopo = nil,
     Titulo = nil,
     Subtitulo = nil,
-    BotaoMinimizar = nil,
     FrameConteudo = nil,
-    FrameConteudoInterno = nil,
     BotaoToggle = nil,
-    BotaoPararItem = nil,
     StatusAutoFarm = nil,
-    StatusPararItem = nil,
     ContadorTempo = nil,
-    ControleVelocidade = nil,
-    LabelVelocidade = nil,
-    SliderVelocidade = nil,
     FrameRodape = nil,
     Versao = nil,
     EstadoMinimizado = false,
@@ -178,8 +145,8 @@ function Interface:CriarUI()
 
     -- Frame Principal (Glassmorphism)
     self.FramePrincipal = Instance.new("Frame")
-    self.FramePrincipal.Size = UDim2.new(0, 380, 0, 520)
-    self.FramePrincipal.Position = UDim2.new(0.5, -190, 0.5, -260)
+    self.FramePrincipal.Size = UDim2.new(0, 380, 0, 480)
+    self.FramePrincipal.Position = UDim2.new(0.5, -190, 0.5, -240)
     self.FramePrincipal.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
     self.FramePrincipal.BackgroundTransparency = 0.15
     self.FramePrincipal.BorderSizePixel = 0
@@ -221,7 +188,7 @@ function Interface:CriarUI()
 
     -- Título GHub
     self.Titulo = Instance.new("TextLabel")
-    self.Titulo.Size = UDim2.new(1, -50, 0, 40)
+    self.Titulo.Size = UDim2.new(1, 0, 0, 40)
     self.Titulo.Position = UDim2.new(0, 0, 0, 10)
     self.Titulo.BackgroundTransparency = 1
     self.Titulo.Text = "GHub"
@@ -230,23 +197,6 @@ function Interface:CriarUI()
     self.Titulo.Font = Enum.Font.GothamBold
     self.Titulo.TextScaled = false
     self.Titulo.Parent = self.FrameTopo
-
-    -- Botão Minimizar
-    self.BotaoMinimizar = Instance.new("TextButton")
-    self.BotaoMinimizar.Size = UDim2.new(0, 30, 0, 30)
-    self.BotaoMinimizar.Position = UDim2.new(1, -40, 0, 10)
-    self.BotaoMinimizar.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
-    self.BotaoMinimizar.BackgroundTransparency = 0.3
-    self.BotaoMinimizar.Text = "−"
-    self.BotaoMinimizar.TextColor3 = Color3.fromRGB(255, 255, 255)
-    self.BotaoMinimizar.TextSize = 20
-    self.BotaoMinimizar.Font = Enum.Font.GothamBold
-    self.BotaoMinimizar.BorderSizePixel = 0
-    self.BotaoMinimizar.Parent = self.FrameTopo
-
-    local minCorners = Instance.new("UICorner")
-    minCorners.CornerRadius = UDim.new(0, 8)
-    minCorners.Parent = self.BotaoMinimizar
 
     -- Subtítulo
     self.Subtitulo = Instance.new("TextLabel")
@@ -260,170 +210,51 @@ function Interface:CriarUI()
     self.Subtitulo.TextScaled = false
     self.Subtitulo.Parent = self.FrameTopo
 
-    -- Frame Conteúdo (container principal)
+    -- Frame Conteúdo
     self.FrameConteudo = Instance.new("Frame")
-    self.FrameConteudo.Size = UDim2.new(1, 0, 1, -120)
-    self.FrameConteudo.Position = UDim2.new(0, 0, 0, 80)
+    self.FrameConteudo.Size = UDim2.new(1, -40, 1, -140)
+    self.FrameConteudo.Position = UDim2.new(0, 20, 0, 100)
     self.FrameConteudo.BackgroundTransparency = 1
     self.FrameConteudo.Parent = self.FramePrincipal
 
-    -- Frame Conteúdo Interno (com padding)
-    self.FrameConteudoInterno = Instance.new("Frame")
-    self.FrameConteudoInterno.Size = UDim2.new(1, -40, 1, -20)
-    self.FrameConteudoInterno.Position = UDim2.new(0, 20, 0, 0)
-    self.FrameConteudoInterno.BackgroundTransparency = 1
-    self.FrameConteudoInterno.Parent = self.FrameConteudo
-
-    -- Botão Toggle (Ativar/Desativar Auto Farm)
+    -- Botão Toggle (Ativar/Desativar)
     self.BotaoToggle = Instance.new("TextButton")
-    self.BotaoToggle.Size = UDim2.new(0, 200, 0, 45)
-    self.BotaoToggle.Position = UDim2.new(0.5, -100, 0, 5)
+    self.BotaoToggle.Size = UDim2.new(0, 200, 0, 50)
+    self.BotaoToggle.Position = UDim2.new(0.5, -100, 0, 20)
     self.BotaoToggle.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
     self.BotaoToggle.BackgroundTransparency = 0.3
     self.BotaoToggle.Text = "ATIVAR AUTO FARM"
     self.BotaoToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-    self.BotaoToggle.TextSize = 15
+    self.BotaoToggle.TextSize = 16
     self.BotaoToggle.Font = Enum.Font.GothamBold
     self.BotaoToggle.BorderSizePixel = 0
-    self.BotaoToggle.Parent = self.FrameConteudoInterno
+    self.BotaoToggle.Parent = self.FrameConteudo
 
     local btnCorners = Instance.new("UICorner")
     btnCorners.CornerRadius = UDim.new(0, 8)
     btnCorners.Parent = self.BotaoToggle
 
-    -- Botão Parar ao Encontrar Item
-    self.BotaoPararItem = Instance.new("TextButton")
-    self.BotaoPararItem.Size = UDim2.new(0, 200, 0, 35)
-    self.BotaoPararItem.Position = UDim2.new(0.5, -100, 0, 60)
-    self.BotaoPararItem.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
-    self.BotaoPararItem.BackgroundTransparency = 0.3
-    self.BotaoPararItem.Text = "PARAR AO ENCONTRAR ITEM: OFF"
-    self.BotaoPararItem.TextColor3 = Color3.fromRGB(255, 255, 255)
-    self.BotaoPararItem.TextSize = 13
-    self.BotaoPararItem.Font = Enum.Font.GothamMedium
-    self.BotaoPararItem.BorderSizePixel = 0
-    self.BotaoPararItem.Parent = self.FrameConteudoInterno
-
-    local pararCorners = Instance.new("UICorner")
-    pararCorners.CornerRadius = UDim.new(0, 8)
-    pararCorners.Parent = self.BotaoPararItem
-
     -- Status Auto Farm
     self.StatusAutoFarm = Instance.new("TextLabel")
-    self.StatusAutoFarm.Size = UDim2.new(0, 150, 0, 25)
-    self.StatusAutoFarm.Position = UDim2.new(0.5, -75, 0, 105)
+    self.StatusAutoFarm.Size = UDim2.new(0, 150, 0, 30)
+    self.StatusAutoFarm.Position = UDim2.new(0.5, -75, 0, 90)
     self.StatusAutoFarm.BackgroundTransparency = 1
     self.StatusAutoFarm.Text = "STATUS: OFF"
     self.StatusAutoFarm.TextColor3 = Color3.fromRGB(255, 80, 80)
-    self.StatusAutoFarm.TextSize = 13
+    self.StatusAutoFarm.TextSize = 14
     self.StatusAutoFarm.Font = Enum.Font.GothamMedium
-    self.StatusAutoFarm.Parent = self.FrameConteudoInterno
-
-    -- Status Parar Item
-    self.StatusPararItem = Instance.new("TextLabel")
-    self.StatusPararItem.Size = UDim2.new(0, 150, 0, 25)
-    self.StatusPararItem.Position = UDim2.new(0.5, -75, 0, 135)
-    self.StatusPararItem.BackgroundTransparency = 1
-    self.StatusPararItem.Text = "PARAR ITEM: OFF"
-    self.StatusPararItem.TextColor3 = Color3.fromRGB(200, 200, 200)
-    self.StatusPararItem.TextSize = 12
-    self.StatusPararItem.Font = Enum.Font.GothamMedium
-    self.StatusPararItem.Parent = self.FrameConteudoInterno
-
-    -- Controle de Velocidade
-    self.ControleVelocidade = Instance.new("Frame")
-    self.ControleVelocidade.Size = UDim2.new(1, 0, 0, 50)
-    self.ControleVelocidade.Position = UDim2.new(0, 0, 0, 165)
-    self.ControleVelocidade.BackgroundTransparency = 1
-    self.ControleVelocidade.Parent = self.FrameConteudoInterno
-
-    self.LabelVelocidade = Instance.new("TextLabel")
-    self.LabelVelocidade.Size = UDim2.new(0, 80, 0, 20)
-    self.LabelVelocidade.Position = UDim2.new(0, 0, 0, 0)
-    self.LabelVelocidade.BackgroundTransparency = 1
-    self.LabelVelocidade.Text = "VEL: 25"
-    self.LabelVelocidade.TextColor3 = Color3.fromRGB(200, 200, 230)
-    self.LabelVelocidade.TextSize = 12
-    self.LabelVelocidade.Font = Enum.Font.GothamMedium
-    self.LabelVelocidade.TextXAlignment = Enum.TextXAlignment.Left
-    self.LabelVelocidade.Parent = self.ControleVelocidade
-
-    -- Slider de Velocidade
-    self.SliderVelocidade = Instance.new("Frame")
-    self.SliderVelocidade.Size = UDim2.new(0, 200, 0, 4)
-    self.SliderVelocidade.Position = UDim2.new(0, 0, 0, 25)
-    self.SliderVelocidade.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
-    self.SliderVelocidade.BackgroundTransparency = 0.3
-    self.SliderVelocidade.BorderSizePixel = 0
-    self.SliderVelocidade.Parent = self.ControleVelocidade
-
-    local sliderCorners = Instance.new("UICorner")
-    sliderCorners.CornerRadius = UDim.new(0, 2)
-    sliderCorners.Parent = self.SliderVelocidade
-
-    -- Barra de progresso do slider
-    local sliderBar = Instance.new("Frame")
-    sliderBar.Size = UDim2.new(0.5, 0, 1, 0)
-    sliderBar.BackgroundColor3 = Color3.fromRGB(100, 130, 255)
-    sliderBar.BorderSizePixel = 0
-    sliderBar.Parent = self.SliderVelocidade
-
-    local barCorners = Instance.new("UICorner")
-    barCorners.CornerRadius = UDim.new(0, 2)
-    barCorners.Parent = sliderBar
-
-    -- Botão do slider (arrastável)
-    local sliderButton = Instance.new("TextButton")
-    sliderButton.Size = UDim2.new(0, 16, 0, 16)
-    sliderButton.Position = UDim2.new(0.5, -8, 0, -6)
-    sliderButton.BackgroundColor3 = Color3.fromRGB(150, 180, 255)
-    sliderButton.BackgroundTransparency = 0.1
-    sliderButton.Text = ""
-    sliderButton.BorderSizePixel = 0
-    sliderButton.Parent = self.SliderVelocidade
-
-    local btnSliderCorners = Instance.new("UICorner")
-    btnSliderCorners.CornerRadius = UDim.new(0, 8)
-    btnSliderCorners.Parent = sliderButton
-
-    -- Tornar slider arrastável
-    local sliderDragging = false
-    sliderButton.MouseButton1Down:Connect(function()
-        sliderDragging = true
-    end)
-
-    GHub.UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            sliderDragging = false
-        end
-    end)
-
-    GHub.UserInputService.InputChanged:Connect(function(input)
-        if sliderDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            local sliderPos = self.SliderVelocidade.AbsolutePosition
-            local sliderSize = self.SliderVelocidade.AbsoluteSize.X
-            local mouseX = input.Position.X - sliderPos.X
-            local percentual = math.clamp(mouseX / sliderSize, 0, 1)
-            
-            GHub.VelocidadeTween = GHub.VelocidadeMinima + (GHub.VelocidadeMaxima - GHub.VelocidadeMinima) * percentual
-            GHub.VelocidadeTween = math.round(GHub.VelocidadeTween)
-            
-            sliderBar.Size = UDim2.new(percentual, 0, 1, 0)
-            sliderButton.Position = UDim2.new(percentual, -8, 0, -6)
-            self.LabelVelocidade.Text = "VEL: " .. tostring(GHub.VelocidadeTween)
-        end
-    end)
+    self.StatusAutoFarm.Parent = self.FrameConteudo
 
     -- Contador de Tempo do Servidor
     self.ContadorTempo = Instance.new("TextLabel")
-    self.ContadorTempo.Size = UDim2.new(0, 250, 0, 30)
-    self.ContadorTempo.Position = UDim2.new(0.5, -125, 0, 220)
+    self.ContadorTempo.Size = UDim2.new(0, 200, 0, 30)
+    self.ContadorTempo.Position = UDim2.new(0.5, -100, 0, 140)
     self.ContadorTempo.BackgroundTransparency = 1
-    self.ContadorTempo.Text = "SERVIDOR ATIVO: 00:00:00"
+    self.ContadorTempo.Text = "TEMPO SERVIDOR: 00:00:00"
     self.ContadorTempo.TextColor3 = Color3.fromRGB(200, 200, 230)
-    self.ContadorTempo.TextSize = 13
+    self.ContadorTempo.TextSize = 14
     self.ContadorTempo.Font = Enum.Font.GothamMedium
-    self.ContadorTempo.Parent = self.FrameConteudoInterno
+    self.ContadorTempo.Parent = self.FrameConteudo
 
     -- Frame Rodapé
     self.FrameRodape = Instance.new("Frame")
@@ -444,45 +275,8 @@ function Interface:CriarUI()
     self.Versao.Font = Enum.Font.GothamMedium
     self.Versao.Parent = self.FrameRodape
 
-    -- Configurar eventos
-    self:ConfigurarEventos()
+    -- Tornar arrastável
     self:TornarArrastavel()
-end
-
-function Interface:ConfigurarEventos()
-    -- Botão Minimizar
-    self.BotaoMinimizar.MouseButton1Click:Connect(function()
-        self.EstadoMinimizado = not self.EstadoMinimizado
-        if self.EstadoMinimizado then
-            self.FrameConteudo.Visible = false
-            self.FrameRodape.Visible = false
-            self.FramePrincipal.Size = UDim2.new(0, 380, 0, 80)
-            self.BotaoMinimizar.Text = "+"
-        else
-            self.FrameConteudo.Visible = true
-            self.FrameRodape.Visible = true
-            self.FramePrincipal.Size = UDim2.new(0, 380, 0, 520)
-            self.BotaoMinimizar.Text = "−"
-        end
-    end)
-
-    -- Botão Auto Farm
-    self.BotaoToggle.MouseButton1Click:Connect(function()
-        GHub.AutoFarm = not GHub.AutoFarm
-        self:AtualizarStatus(GHub.AutoFarm)
-
-        if GHub.AutoFarm then
-            task.spawn(function()
-                GHub:ExecutarAutoFarm()
-            end)
-        end
-    end)
-
-    -- Botão Parar ao Encontrar Item
-    self.BotaoPararItem.MouseButton1Click:Connect(function()
-        GHub.PararAoEncontrarItem = not GHub.PararAoEncontrarItem
-        self:AtualizarStatusPararItem(GHub.PararAoEncontrarItem)
-    end)
 end
 
 function Interface:TornarArrastavel()
@@ -523,13 +317,12 @@ function Interface:TornarArrastavel()
 end
 
 function Interface:AtualizarTempoServidor()
-    if not GHub.TempoCriacaoServidor then return end
-    
+    -- Calcula o tempo desde a criação do servidor
     local tempoDecorrido = os.time() - GHub.TempoCriacaoServidor
     local horas = string.format("%02d", math.floor(tempoDecorrido / 3600))
     local minutos = string.format("%02d", math.floor((tempoDecorrido % 3600) / 60))
     local segundos = string.format("%02d", tempoDecorrido % 60)
-    self.ContadorTempo.Text = "SERVIDOR ATIVO: " .. horas .. ":" .. minutos .. ":" .. segundos
+    self.ContadorTempo.Text = "TEMPO SERVIDOR: " .. horas .. ":" .. minutos .. ":" .. segundos
 end
 
 function Interface:AtualizarStatus(ativo)
@@ -540,4 +333,73 @@ function Interface:AtualizarStatus(ativo)
         self.BotaoToggle.BackgroundColor3 = Color3.fromRGB(60, 40, 40)
     else
         self.StatusAutoFarm.Text = "STATUS: OFF"
-        self.StatusAutoFarm.TextCo
+        self.StatusAutoFarm.TextColor3 = Color3.fromRGB(255, 80, 80)
+        self.BotaoToggle.Text = "ATIVAR AUTO FARM"
+        self.BotaoToggle.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+    end
+end
+
+function Interface:ConfigurarBotoes()
+    self.BotaoToggle.MouseButton1Click:Connect(function()
+        GHub.AutoFarm = not GHub.AutoFarm
+        self:AtualizarStatus(GHub.AutoFarm)
+
+        if GHub.AutoFarm then
+            task.spawn(function()
+                GHub:ExecutarAutoFarm()
+            end)
+        end
+    end)
+end
+
+-- INICIALIZAÇÃO
+function GHub:Iniciar()
+    -- Obtém o tempo de criação do servidor
+    -- O servidor inicia quando o jogo é carregado, usamos o tempo atual como referência
+    -- pois não temos acesso direto ao tempo de criação do servidor
+    self.TempoCriacaoServidor = os.time()
+    
+    -- Tenta obter o tempo real de criação do servidor através do Datastore ou serviço
+    -- Caso não seja possível, usa o tempo atual como referência
+    pcall(function()
+        -- Alguns jogos tem o tempo de criação do servidor armazenado
+        local serverTime = game:GetService("ReplicatedStorage"):FindFirstChild("ServerStartTime")
+        if serverTime and type(serverTime.Value) == "number" then
+            self.TempoCriacaoServidor = serverTime.Value
+        end
+    end)
+
+    -- Cria interface
+    Interface:CriarUI()
+    Interface:ConfigurarBotoes()
+
+    -- Inicia contador de tempo do servidor
+    task.spawn(function()
+        while true do
+            Interface:AtualizarTempoServidor()
+            task.wait(1)
+        end
+    end)
+
+    -- Atualiza personagem periodicamente
+    task.spawn(function()
+        while true do
+            self:AtualizarPersonagem()
+            task.wait(0.5)
+        end
+    end)
+
+    -- Limpa lista de baús proibidos periodicamente
+    task.spawn(function()
+        while true do
+            task.wait(300)
+            self.BausProibidos = {}
+        end
+    end)
+
+    print("GHub v1.0 - Auto Farm Chest carregado com sucesso!")
+    print("Tempo de criação do servidor: " .. os.date("%d/%m/%Y %H:%M:%S", self.TempoCriacaoServidor))
+end
+
+-- Executa o script
+GHub:Iniciar()
